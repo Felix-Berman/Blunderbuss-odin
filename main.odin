@@ -12,13 +12,6 @@ init :: proc() {
 main :: proc() {
     init()
 
-    position := new_position()
+    position := parse_fen(STARTING_FEN)
     fmt.println(display(position))
-
-    moves := gen_pseudo_legal_moves(.Black, &position)
-    for move in moves {
-        fmt.println(display(move))
-    }
-
-    fmt.println(len(moves))
 }

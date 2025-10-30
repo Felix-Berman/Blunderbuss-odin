@@ -15,9 +15,14 @@ SQ_NAMES := [64]string{
     "h8", "g8", "f8", "e8", "d8", "c8", "b8", "a8",
 }
 
+piece_chars: [Colour][PieceType]rune = {
+    .White = {.Pawn = 'P', .Knight = 'N', .Bishop = 'B', .Rook = 'R', .Queen = 'Q', .King = 'K'},
+    .Black = {.Pawn = 'p', .Knight = 'n', .Bishop = 'b', .Rook = 'r', .Queen = 'q', .King = 'k'},
+}
+
 display_sq :: proc(sq: $T) -> string 
 where intrinsics.type_is_numeric(T) {
-    return SQ_NAMES[sq]
+    return SQ_NAMES[uint(sq)]
 }
 
 display_bitboard :: proc(bitboard: u64) -> string {
@@ -73,7 +78,7 @@ display_board :: proc(position: Position) -> string {
     if position.ep_sq != 64 {
         file := position.ep_sq % 8
         rank := position.ep_sq / 8
-        fmt.sbprintf(&builder, "En passant square: %c%d", 'a'+file, rank+1)
+        fmt.sbprintfln(&builder, "En passant square: %c%d", 'a'+file, rank+1)
     } else {
         fmt.sbprintln(&builder, "En passant square: -")
     }

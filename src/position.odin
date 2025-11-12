@@ -3,36 +3,48 @@ package blunderbuss
 import "core:strings"
 import "core:unicode"
 import "core:strconv"
+import "base:intrinsics"
 
 STARTING_FEN :: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
 Colour :: enum{White, Black}
 PieceType :: enum{Pawn, Knight, Bishop, Rook, Queen, King}
+Piece :: struct{colour: Colour, type: PieceType}
 Castling :: enum{WhiteKingside, WhiteQueenside, BlackKingside, BlackQueenside}
 
 Position :: struct {
-    bitboards: [Colour][PieceType]u64,
+    pieces: [Colour][PieceType]u64,
     occupancy: [Colour]u64,
+    atk_masks: [Colour]u64,
     turn: Colour,
     castling_rights: bit_set[Castling],
     ep_sq: int,
     halfmove_clk: uint,
     ply: uint,
+
+    irreversible_history: [dynamic]Irreversibles,
+}
+
+Irreversibles :: struct {
+    ep_sq: int,
+    captured_piece: Maybe(Piece),
+    castling_rights: bit_set[Castling],
+    halfmove_clk: uint
 }
 
 starting_position :: proc() -> (position: Position) {
-    position.bitboards[.White][.Pawn] = 0xff00
-    position.bitboards[.White][.Knight] = 0x42
-    position.bitboards[.White][.Bishop] = 0x24
-    position.bitboards[.White][.Rook] = 0x81
-    position.bitboards[.White][.King] = 0x08
-    position.bitboards[.White][.Queen] = 0x10
-    position.bitboards[.Black][.Pawn] = 0xff << (6*8)
-    position.bitboards[.Black][.Knight] = 0x42 << (7*8)
-    position.bitboards[.Black][.Bishop] = 0x24 << (7*8)
-    position.bitboards[.Black][.Rook] = 0x81 << (7*8)
-    position.bitboards[.Black][.King] = 0x08 << (7*8)
-    position.bitboards[.Black][.Queen] = 0x10 << (7*8)
+    position.pieces[.White][.Pawn] = 0xff00
+    position.pieces[.White][.Knight] = 0x42
+    position.pieces[.White][.Bishop] = 0x24
+    position.pieces[.White][.Rook] = 0x81
+    position.pieces[.White][.King] = 0x08
+    position.pieces[.White][.Queen] = 0x10
+    position.pieces[.Black][.Pawn] = 0xff << (6*8)
+    position.pieces[.Black][.Knight] = 0x42 << (7*8)
+    position.pieces[.Black][.Bishop] = 0x24 << (7*8)
+    position.pieces[.Black][.Rook] = 0x81 << (7*8)
+    position.pieces[.Black][.King] = 0x08 << (7*8)
+    position.pieces[.Black][.Queen] = 0x10 << (7*8)
 
     position.occupancy = [Colour]u64{.White = 0xffff, .Black = 0xffff << (6*8)}
     position.turn = .White
@@ -40,6 +52,10 @@ starting_position :: proc() -> (position: Position) {
     position.ep_sq = 64
     position.halfmove_clk = 0
     position.ply = 0
+
+    gen_attack_mask(.White, &position, occupied(&position))
+    gen_attack_mask(.Black, &position, occupied(&position))
+    
     return
 }
 
@@ -48,11 +64,30 @@ occupied :: proc(position: ^Position) -> u64 {
 }
 
 toggle :: proc(colour: Colour) -> Colour {
-    return .Black if colour == .White else .White
+    return Colour(int(colour) ~ 1)
+}
+
+piece_on :: proc(position: ^Position, sq: $T) -> (Piece, bool) 
+    where intrinsics.type_is_numeric(T) {
+    
+    for colour in Colour {
+        for type in PieceType {
+            if position.pieces[colour][type] & to_bitboard(sq) != 0 {
+                return Piece{colour, type}, true
+            }
+        }
+    }
+
+    return {}, false
+}
+
+is_in_check :: proc(side: Colour, position: ^Position) -> bool {
+    return position.pieces[side][.King] & position.atk_masks[toggle(side)] != 0
 }
 
 parse_fen :: proc(fen: string) -> (position: Position) {
     fields := strings.split(fen, " ")
+    defer delete(fields)
     board := fields[0]
     turn := fields[1]
     castling := fields[2]
@@ -72,7 +107,9 @@ parse_fen :: proc(fen: string) -> (position: Position) {
             for pieces, colour in piece_chars {
                 for piece_char, piece in pieces {
                     if char == piece_char {
-                        position.bitboards[colour][piece] |= to_bitboard(8*rank + file)
+                        bb := to_bitboard(8*rank + file)
+                        position.pieces[colour][piece] |= bb
+                        position.occupancy[colour] |= bb
                         file -= 1
                         break outer
                     }
@@ -105,7 +142,7 @@ parse_fen :: proc(fen: string) -> (position: Position) {
 
     position.ep_sq = 64
     for sq_str, sq in SQ_NAMES {
-        if strings.to_lower(ep_sq) == sq_str {
+        if strings.equal_fold(ep_sq, sq_str) {
             position.ep_sq = sq
             break
         }
@@ -114,6 +151,10 @@ parse_fen :: proc(fen: string) -> (position: Position) {
     position.halfmove_clk = strconv.parse_uint(halfmove_clk) or_else 0
     fullmove := strconv.parse_uint(fullmove_clk) or_else 1
     position.ply = 2 * (fullmove - 1) + uint(position.turn)
+
+    occ := occupied(&position)
+    gen_attack_mask(.White, &position, occ)
+    gen_attack_mask(.Black, &position, occ)
 
     return
 }

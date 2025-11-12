@@ -43,7 +43,7 @@ gen_pseudo_legal_moves :: proc($side: Colour, position: ^Position) -> (moves: [d
     occ := occupied(position)
     atk := gen_attack_mask(side, position, occ)
     enemies := position.occupancy[toggle(side)]
-    piece_bitboards := position.bitboards[side]
+    piece_bitboards := position.pieces[side]
 
     gen_castling(side, position, occ, atk, &moves)
     
@@ -140,7 +140,7 @@ queen_moves :: proc(sq: int, occ: u64) -> u64 {
 gen_pawn_pushes :: proc($side: Colour, position: ^Position, moves: ^[dynamic]Move) {
     forward :: 8 when side == .White else -8
 
-    pawns := position.bitboards[side][.Pawn]
+    pawns := position.pieces[side][.Pawn]
     occ := occupied(position)
 
     single_push := (pawns << 8 when side == .White else pawns >> 8) &~ occ
@@ -175,7 +175,7 @@ gen_pawn_captures :: proc($side: Colour, position: ^Position, moves: ^[dynamic]M
     west :: 9 when side == .White else -7
     east :: 7 when side == .White else -9
 
-    pawns := position.bitboards[side][.Pawn]
+    pawns := position.pieces[side][.Pawn]
     targets := position.occupancy[toggle(side)]
 
     west_captures := (pawns << 9 when side == .White else pawns >> 7) &~ H_FILE & targets
@@ -217,7 +217,7 @@ gen_pawn_captures :: proc($side: Colour, position: ^Position, moves: ^[dynamic]M
 
 // assumes en passant is legal
 gen_en_passant :: proc($side: Colour, position: ^Position, moves: ^[dynamic]Move) {
-    pawns := position.bitboards[side][.Pawn]
+    pawns := position.pieces[side][.Pawn]
     to := position.ep_sq
     to_bb := to_bitboard(to)
     from_bb: u64
@@ -262,11 +262,11 @@ gen_castling :: proc($side: Colour, position: ^Position, occ, atk: u64, moves: ^
 }
 
 gen_attack_mask :: proc($side: Colour, position: ^Position, occ: u64) -> (atk: u64) {
-    king := position.bitboards[side][.King]
-    knights := position.bitboards[side][.Knight]
-    bishop_queen := position.bitboards[side][.Bishop] | position.bitboards[side][.Queen]
-    rook_queen := position.bitboards[side][.Rook] | position.bitboards[side][.Queen]
-    pawns := position.bitboards[side][.Pawn]
+    king := position.pieces[side][.King]
+    knights := position.pieces[side][.Knight]
+    bishop_queen := position.pieces[side][.Bishop] | position.pieces[side][.Queen]
+    rook_queen := position.pieces[side][.Rook] | position.pieces[side][.Queen]
+    pawns := position.pieces[side][.Pawn]
 
     when side == .White {
         atk |= ((pawns << 9) &~ H_FILE) | ((pawns << 7) &~ A_FILE)
@@ -286,6 +286,7 @@ gen_attack_mask :: proc($side: Colour, position: ^Position, occ: u64) -> (atk: u
         atk |= rook_moves(sq, occ)
     }
 
+    position.atk_masks[side] = atk
     return
 }
 

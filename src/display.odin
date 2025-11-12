@@ -20,13 +20,21 @@ piece_chars: [Colour][PieceType]rune = {
     .Black = {.Pawn = 'p', .Knight = 'n', .Bishop = 'b', .Rook = 'r', .Queen = 'q', .King = 'k'},
 }
 
-display_sq :: proc(sq: $T) -> string 
-where intrinsics.type_is_numeric(T) {
+to_string_sq :: proc(sq: Square) -> string {
     return SQ_NAMES[uint(sq)]
 }
 
-display_bitboard :: proc(bitboard: u64) -> string {
+to_string_sq_int :: proc(sq: int) -> string {
+    return SQ_NAMES[uint(sq)]
+}
+
+to_string_sq_uint :: proc(sq: uint) -> string {
+    return SQ_NAMES[sq]
+}
+
+to_string_bitboard :: proc(bitboard: u64) -> string {
     builder := strings.builder_make()
+    defer strings.builder_destroy(&builder)
 
     for sq := 63; sq >= 0; sq -= 1 {
         if bitboard & (1 << uint(sq)) == 0 {
@@ -43,8 +51,9 @@ display_bitboard :: proc(bitboard: u64) -> string {
     return strings.to_string(builder)
 }
 
-display_board :: proc(position: Position) -> string {
+to_string_board :: proc(position: Position) -> string {
     builder := strings.builder_make()
+    defer strings.builder_destroy(&builder)
 
     for rank := 7; rank >= 0; rank -= 1 {
         fmt.sbprintf(&builder, "%d ", rank + 1)
@@ -55,7 +64,7 @@ display_board :: proc(position: Position) -> string {
 
             outer: for colour in Colour {
                 for piece in PieceType {
-                    if position.bitboards[colour][piece] & (1 << uint(sq)) != 0 {
+                    if position.pieces[colour][piece] & (1 << uint(sq)) != 0 {
                         piece_char = piece_chars[colour][piece]
                         break outer
                     }
@@ -88,9 +97,10 @@ display_board :: proc(position: Position) -> string {
     return strings.to_string(builder)
 }
 
-display_move :: proc(move: Move) -> string {
+to_string_move :: proc(move: Move) -> string {
     builder := strings.builder_make()
-    fmt.sbprintf(&builder, "%s%s", display(move.from), display(move.to))
+    defer strings.builder_destroy(&builder)
+    fmt.sbprintf(&builder, "%s%s", to_string(move.from), to_string(move.to))
 
     flags := get_flags(move)
     switch flags &~ CAPTURE {
@@ -107,9 +117,11 @@ display_move :: proc(move: Move) -> string {
     return strings.to_string(builder)
 }
 
-display :: proc {
-    display_board, 
-    display_bitboard, 
-    display_sq,
-    display_move,
+to_string :: proc {
+    to_string_board, 
+    to_string_bitboard, 
+    to_string_sq,
+    to_string_sq_int,
+    to_string_sq_uint,
+    to_string_move,
 }

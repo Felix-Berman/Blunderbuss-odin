@@ -38,7 +38,7 @@ perft_divide :: proc(position: ^Position, depth: int) {
 	assert(depth > 0)
 
 	total_nodes: int = 0
-    
+
 	moves: [dynamic]Move
     defer delete(moves)
 
@@ -48,13 +48,6 @@ perft_divide :: proc(position: ^Position, depth: int) {
         moves = gen_pseudo_legal_moves(.Black, position)
     }
 	
-
-	node_counts := make(map[string]int)
-	defer delete(node_counts)
-
-	keys: [dynamic]string
-	defer delete(keys)
-
 	for move in moves {
 		make_move(position, move)
 		defer unmake_move(position, move)
@@ -62,23 +55,15 @@ perft_divide :: proc(position: ^Position, depth: int) {
 		if is_in_check(position.turn, position) do continue
 
 		nodes := perft(position, depth - 1)
+		total_nodes += nodes
 
 		move_str := to_string(move)
+		defer delete(move_str)
 
-		node_counts[move_str] = nodes
-		append(&keys, move_str)
-
-		total_nodes += nodes
-	}
-
-	slice.sort(keys[:])
-	for move_str in keys {
-		nodes := node_counts[move_str]
 		fmt.printfln("{} {}", move_str, nodes)
 	}
-	fmt.println(total_nodes)
 
-	free_all(context.temp_allocator)
+	fmt.println(total_nodes)
 }
 
 test_range :: [2]int{0, 126}

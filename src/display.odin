@@ -32,9 +32,8 @@ to_string_sq_uint :: proc(sq: uint) -> string {
     return SQ_NAMES[sq]
 }
 
-to_string_bitboard :: proc(bitboard: u64) -> string {
-    builder := strings.builder_make()
-    defer strings.builder_destroy(&builder)
+to_string_bitboard :: proc(bitboard: u64, allocator := context.allocator) -> string {
+    builder := strings.builder_make(allocator)
 
     for sq := 63; sq >= 0; sq -= 1 {
         if bitboard & (1 << uint(sq)) == 0 {
@@ -51,9 +50,8 @@ to_string_bitboard :: proc(bitboard: u64) -> string {
     return strings.to_string(builder)
 }
 
-to_string_board :: proc(position: Position) -> string {
-    builder := strings.builder_make()
-    defer strings.builder_destroy(&builder)
+to_string_board :: proc(position: Position, allocator := context.allocator) -> string {
+    builder := strings.builder_make(allocator)
 
     for rank := 7; rank >= 0; rank -= 1 {
         fmt.sbprintf(&builder, "%d ", rank + 1)
@@ -97,9 +95,8 @@ to_string_board :: proc(position: Position) -> string {
     return strings.to_string(builder)
 }
 
-to_string_move :: proc(move: Move) -> string {
-    builder := strings.builder_make()
-    defer strings.builder_destroy(&builder)
+to_string_move :: proc(move: Move, allocator := context.allocator) -> string {
+    builder := strings.builder_make(allocator)
     fmt.sbprintf(&builder, "%s%s", to_string(move.from), to_string(move.to))
 
     flags := get_flags(move)

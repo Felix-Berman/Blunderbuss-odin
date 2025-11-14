@@ -22,9 +22,9 @@ main :: proc() {
 		}
 	}
 
-    position := parse_fen(STARTING_FEN)
+	position := parse_fen(STARTING_FEN)
 
-    perft_divide(&position, 1)
+	perft_divide(&position, 5)
 
-    delete(position.irreversible_history)
+	delete(position.irreversible_history)
 }

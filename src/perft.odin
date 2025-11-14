@@ -13,20 +13,16 @@ perft :: proc(position: ^Position, depth: int) -> (nodes: int) {
 		return 1
 	}
 
-	moves: [dynamic]Move
+	moves := gen_pseudo_legal_moves(position)
     defer delete(moves)
 
-    if position.turn == .White {
-        moves = gen_pseudo_legal_moves(.White, position)
-    } else {
-        moves = gen_pseudo_legal_moves(.Black, position)
-    }
+	us := position.turn
 
 	for move, i in moves {
 		make_move(position, move)
 		defer unmake_move(position, move)
 
-		if is_in_check(position.turn, position) do continue
+		if is_in_check(us, position) do continue
 
 		nodes += perft(position, depth - 1)
 	}
@@ -39,20 +35,16 @@ perft_divide :: proc(position: ^Position, depth: int) {
 
 	total_nodes: int = 0
 
-	moves: [dynamic]Move
+	moves := gen_pseudo_legal_moves(position)
     defer delete(moves)
 
-    if position.turn == .White {
-        moves = gen_pseudo_legal_moves(.White, position)
-    } else {
-        moves = gen_pseudo_legal_moves(.Black, position)
-    }
+	us := position.turn
 	
 	for move in moves {
 		make_move(position, move)
 		defer unmake_move(position, move)
 
-		if is_in_check(position.turn, position) do continue
+		if is_in_check(us, position) do continue
 
 		nodes := perft(position, depth - 1)
 		total_nodes += nodes

@@ -82,7 +82,10 @@ piece_on :: proc(position: ^Position, sq: $T) -> (Piece, bool)
 }
 
 is_in_check :: proc(side: Colour, position: ^Position) -> bool {
-    return position.pieces[side][.King] & position.atk_masks[toggle(side)] != 0
+	atk: u64
+	if side == .White do atk = gen_attack_mask(.Black, position, occupied(position))
+	if side == .Black do atk = gen_attack_mask(.White, position, occupied(position))
+    return position.pieces[side][.King] & atk != 0
 }
 
 parse_fen :: proc(fen: string) -> (position: Position) {

@@ -2,6 +2,7 @@ package blunderbuss
 
 import "base:intrinsics"
 import "core:fmt"
+import "core:strings"
 
 // Move Encoding: https://www.chessprogramming.org/Encoding_Moves
 MoveFlags :: enum{Promotion, Capture, Special1, Special0}
@@ -39,22 +40,33 @@ where intrinsics.type_is_numeric(T) {
     return
 }
 
-gen_pseudo_legal_moves :: proc($side: Colour, position: ^Position) -> (moves: [dynamic]Move) {
+gen_pseudo_legal_moves :: proc(position: ^Position) -> (moves: [dynamic]Move) {
+	us := position.turn
+	them := toggle(us)
     occ := occupied(position)
-    atk := gen_attack_mask(side, position, occ)
-    enemies := position.occupancy[toggle(side)]
-    piece_bitboards := position.pieces[side]
+    enemies := position.occupancy[them]
+    piece_bitboards := position.pieces[us]
+	atk: u64
 
-    gen_castling(side, position, occ, atk, &moves)
-    
+	if us == .White {
+		atk = gen_attack_mask(.Black, position, occ)
+		gen_castling(.White, position, occ, atk, &moves)
+		gen_en_passant(.White, position, &moves)
+		gen_pawn_captures(.White, position, &moves)
+		gen_pawn_pushes(.White, position, &moves)
+	} else {
+		atk = gen_attack_mask(.White, position, occ)
+		gen_castling(.Black, position, occ, atk, &moves)
+		gen_en_passant(.Black, position, &moves)
+		gen_pawn_captures(.Black, position, &moves)
+		gen_pawn_pushes(.Black, position, &moves)
+	}
+
     for &bb, piece in piece_bitboards {
         move_proc: proc(sq: int, occ: u64) -> u64
 
         switch piece {
             case .Pawn:
-                gen_en_passant(side, position, &moves)
-                gen_pawn_captures(side, position, &moves)
-                gen_pawn_pushes(side, position, &moves)
                 continue
             case .Knight:
                 move_proc = knight_moves_sq
@@ -86,8 +98,6 @@ gen_pseudo_legal_moves :: proc($side: Colour, position: ^Position) -> (moves: [d
             }
         }
     }
-
-    
 
     return
 }

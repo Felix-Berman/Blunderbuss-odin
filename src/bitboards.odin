@@ -52,8 +52,7 @@ SqMasks :: struct {
     antidiag_mask: u64,
 }
 
-init_sq_masks :: proc "contextless" () -> [64]SqMasks {
-    masks: [64]SqMasks
+init_sq_masks :: proc "contextless" () -> (masks: [64]SqMasks) {
     for rank: uint = 0; rank < 8; rank += 1 {
         for file: uint = 0; file < 8; file += 1 {
             sq := 8*rank + file
@@ -74,7 +73,7 @@ init_sq_masks :: proc "contextless" () -> [64]SqMasks {
             }
         }
     }
-    return masks
+    return
 }
 
 lsb :: proc(bitboard: u64) -> int {

@@ -1,5 +1,7 @@
 package blunderbuss
 
+import "core:strings"
+
 make_move :: proc(position: ^Position, move: Move) {
     us := position.turn
     forward := 8 if us == .White else -8
@@ -140,3 +142,26 @@ unmake_move :: proc(position: ^Position, move: Move) {
     position.turn = us
     position.ply -= 1
 }
+
+make_move_str :: proc(position: ^Position, str: string) -> (ok: bool) {
+	moves := gen_pseudo_legal_moves(position)
+	defer delete(moves)
+
+	for move in moves {
+		move_str := to_string(move)
+		defer delete(move_str)
+		if strings.equal_fold(move_str, str) {
+			make_move(position, move)
+			if is_in_check(toggle(position.turn), position) {
+				unmake_move(position, move)
+				return
+			}
+
+			ok = true
+			break
+		}
+	}
+
+	return
+}
+

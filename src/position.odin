@@ -11,6 +11,10 @@ Colour :: enum{White, Black}
 PieceType :: enum{Pawn, Knight, Bishop, Rook, Queen, King}
 Piece :: struct{colour: Colour, type: PieceType}
 Castling :: enum{WhiteKingside, WhiteQueenside, BlackKingside, BlackQueenside}
+CASTLING_SIDE: [Colour]bit_set[Castling] = {
+	.White = {.WhiteKingside, .WhiteQueenside},
+	.Black = {.BlackKingside, .BlackQueenside}
+}
 
 Position :: struct {
     pieces: [Colour][PieceType]u64,

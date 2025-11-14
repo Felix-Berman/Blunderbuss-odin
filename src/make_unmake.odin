@@ -65,14 +65,14 @@ make_move :: proc(position: ^Position, move: Move) {
         rook_from_to: u64 = 0x05 if us == .White else 0x05 << 56
         position.pieces[us][.Rook] ~= rook_from_to
         position.occupancy[us] ~= rook_from_to
-        position.castling_rights = {}
+        position.castling_rights &~= CASTLING_SIDE[us]
     } else if flags == QUEEN_CASTLE {
         rook_from_to: u64 = 0x90 if us == .White else 0x90 << 56
         position.pieces[us][.Rook] ~= rook_from_to
         position.occupancy[us] ~= rook_from_to
-        position.castling_rights = {}
+        position.castling_rights &~= CASTLING_SIDE[us]
     } else if mover.type == .King {
-        position.castling_rights = {}
+        position.castling_rights &~= CASTLING_SIDE[us]
     } else {
         if from_to_bb & to_bitboard(Square.H1) != 0 {
             position.castling_rights &~= {.WhiteKingside}

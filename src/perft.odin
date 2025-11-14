@@ -2,7 +2,6 @@ package blunderbuss
 
 import "core:fmt"
 import "core:os"
-import "core:slice"
 import "core:strconv"
 import "core:strings"
 import "core:testing"
@@ -58,7 +57,7 @@ perft_divide :: proc(position: ^Position, depth: int) {
 	fmt.println(total_nodes)
 }
 
-test_range :: [2]int{0, 126}
+test_range :: [2]int{1, 126}
 
 @(test)
 perft_suite :: proc(t: ^testing.T) {

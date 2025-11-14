@@ -98,11 +98,11 @@ perft_suite :: proc(t: ^testing.T) {
 			nodes := perft(&position, int(depth))
 			
 			if !testing.expect_value(t, nodes, expected_nodes) {
-                log.infof("depth {}: FAIL", depth)
+                log.infof("depth {}: \033[31;1mFAIL\033[0m", depth)
 				return
 			}
 
-			log.infof("depth {}: SUCCESS", depth)
+			log.infof("depth {}: \033[32;1mSUCCESS\033[0m", depth)
 		}
 
 		test_num += 1

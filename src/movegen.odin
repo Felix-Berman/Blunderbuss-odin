@@ -252,14 +252,17 @@ gen_castling :: proc($side: Colour, position: ^Position, occ, atk: u64, moves: ^
 
     // squares that must be vaccant and not attacked
     kingside_mask :: 0x06 when side == .White else 0x06 << 56
-    queenside_mask :: 0x30 when side == .White else 0x30 << 56
+    queenside_check_mask :: 0x30 when side == .White else 0x30 << 56
+    queenside_block_mask :: 0x70 when side == .White else 0x30 << 56
 
     kingside: Castling = .WhiteKingside when side == .White else .BlackKingside
     queenside: Castling = .WhiteQueenside when side == .White else .BlackQueenside
 
     blocks := occ | atk
-    kingside_legal := kingside in position.castling_rights && kingside_mask & blocks == 0
-    queenside_legal := queenside in position.castling_rights && queenside_mask & blocks == 0
+    kingside_legal := kingside in position.castling_rights &&
+		kingside_mask & blocks == 0
+    queenside_legal := queenside in position.castling_rights &&
+		queenside_check_mask & atk == 0 && queenside_block_mask & occ == 0
 
     if kingside_legal {
         append(moves, build_move(from, to_kingside, KING_CASTLE))

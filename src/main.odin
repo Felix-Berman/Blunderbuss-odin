@@ -23,8 +23,8 @@ main :: proc() {
 	}
 
 	position := parse_fen(STARTING_FEN)
-
-	perft_divide(&position, 5)
+	
+	perft_divide(&position, 1)
 
 	delete(position.irreversible_history)
 }

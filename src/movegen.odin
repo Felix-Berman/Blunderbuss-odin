@@ -1,8 +1,6 @@
 package blunderbuss
 
 import "base:intrinsics"
-import "core:fmt"
-import "core:strings"
 
 // Move Encoding: https://www.chessprogramming.org/Encoding_Moves
 MoveFlags :: enum{Promotion, Capture, Special1, Special0}
@@ -231,7 +229,7 @@ gen_en_passant :: proc($side: Colour, position: ^Position, moves: ^[dynamic]Move
     to := position.ep_sq
     to_bb := to_bitboard(to)
     from_bb: u64
-    
+
     when side == .White {
         from_bb = ((to_bb >> 7) &~ H_FILE) | ((to_bb >> 9) &~ A_FILE)
     } else {

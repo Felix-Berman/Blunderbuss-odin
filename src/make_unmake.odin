@@ -44,7 +44,7 @@ make_move :: proc(position: ^Position, move: Move) {
     // ep_sq must be reset before double push to distinguish between value from this move or previous move
     position.ep_sq = 64 
     if flags == DOUBLE_PUSH {
-        position.ep_sq = int(move.from) - forward
+        position.ep_sq = int(move.from) + forward
     }
 
     if .Promotion in flags {

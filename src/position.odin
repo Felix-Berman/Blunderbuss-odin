@@ -92,15 +92,9 @@ is_in_check :: proc(side: Colour, position: ^Position) -> bool {
     return position.pieces[side][.King] & atk != 0
 }
 
-parse_fen :: proc(fen: string) -> (position: Position) {
-    fields := strings.split(fen, " ")
-    defer delete(fields)
-    board := fields[0]
-    turn := fields[1]
-    castling := fields[2]
-    ep_sq := fields[3]
-    halfmove_clk := fields[4]
-    fullmove_clk := fields[5]
+parse_fen :: proc(fen: ^string) -> (position: Position, ok: bool) {
+
+	board := strings.split_iterator(fen, " ") or_return
 
     rank := 7
     file := 7
@@ -127,12 +121,16 @@ parse_fen :: proc(fen: string) -> (position: Position) {
         rank -= 1
     }
 
-    switch turn[0] {
-        case 'w':
+	turn := strings.split_iterator(fen, " ") or_return
+
+    switch turn {
+        case "w":
             position.turn = .White
-        case 'b':
+        case "b":
             position.turn = .Black
     }
+
+	castling := strings.split_iterator(fen, " ") or_return
 
     for char in castling {
         switch char {
@@ -147,13 +145,18 @@ parse_fen :: proc(fen: string) -> (position: Position) {
         }
     }
 
+	ep_str := strings.split_iterator(fen, " ") or_return
+
     position.ep_sq = 64
     for sq_str, sq in SQ_NAMES {
-        if strings.equal_fold(ep_sq, sq_str) {
+        if strings.equal_fold(ep_str, sq_str) {
             position.ep_sq = sq
             break
         }
     }
+
+	halfmove_clk := strings.split_iterator(fen, " ") or_else "0"
+	fullmove_clk := strings.split_iterator(fen, " ") or_else "1"
 
     position.halfmove_clk = strconv.parse_uint(halfmove_clk) or_else 0
     fullmove := strconv.parse_uint(fullmove_clk) or_else 1
@@ -163,5 +166,5 @@ parse_fen :: proc(fen: string) -> (position: Position) {
     gen_attack_mask(.White, &position, occ)
     gen_attack_mask(.Black, &position, occ)
 
-    return
+    return position, true
 }

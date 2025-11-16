@@ -22,12 +22,5 @@ main :: proc() {
 		}
 	}
 
-	position := parse_fen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1")
-	
-	make_move_str(&position, "c3b1")
-	make_move_str(&position, "a6b7")
-
-	perft_divide(&position, 1)
-
-	delete(position.irreversible_history)
+	uci_loop()
 }

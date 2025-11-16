@@ -13,7 +13,7 @@ perft :: proc(position: ^Position, depth: int) -> (nodes: int) {
 	}
 
 	moves := gen_pseudo_legal_moves(position)
-    defer delete(moves)
+	defer delete(moves)
 
 	us := position.turn
 
@@ -35,7 +35,7 @@ perft_divide :: proc(position: ^Position, depth: int) {
 	total_nodes: int = 0
 
 	moves := gen_pseudo_legal_moves(position)
-    defer delete(moves)
+	defer delete(moves)
 
 	us := position.turn
 	
@@ -81,7 +81,7 @@ perft_suite :: proc(t: ^testing.T) {
 		fen, ok := strings.split_iterator(&fields, ";")
 		if !ok do return
 
-		position := parse_fen(fen)
+		position := parse_fen(&fen) or_continue
         defer delete(position.irreversible_history)
 
 		log.infof("perft test {}\nFEN: {}", test_num, fen)

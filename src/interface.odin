@@ -9,7 +9,8 @@ import "core:strconv"
 uci_loop :: proc() {
 	stdin := os.stream_from_handle(os.stdin)
 	scanner: bufio.Scanner
-	bufio.scanner_init(&scanner, stdin, context.temp_allocator)
+	bufio.scanner_init(&scanner, stdin)
+	defer bufio.scanner_destroy(&scanner)
 
 	position := starting_position()
 	defer delete(position.irreversible_history)
@@ -44,7 +45,8 @@ uci_loop :: proc() {
 				delete(position.irreversible_history)
 				position = new_position
 			} else {
-				fmt.println("Invalid position command")	
+				fmt.println("Invalid position command: ",
+					bufio.scanner_text(&scanner))	
 			}
 		case "perft":
 			if depth_str, ok := strings.split_iterator(&line, " "); ok {
@@ -71,7 +73,7 @@ parse_position :: proc(line: ^string) -> (position: Position, ok: bool) {
 		position = starting_position()
 	} else if specifier == "fen" {
 		fen := strings.split_iterator(line, " moves ") or_return
-		position = parse_fen(&fen) or_return
+		position = parse_fen(fen) or_return
 	}
 
 	for move in strings.split_iterator(line, " ") {

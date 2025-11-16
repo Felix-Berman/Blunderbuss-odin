@@ -30,7 +30,9 @@ perft :: proc(position: ^Position, depth: int) -> (nodes: int) {
 }
 
 perft_divide :: proc(position: ^Position, depth: int) {
-	assert(depth > 0)
+	if depth == 0 {
+		fmt.println(0)
+	}
 
 	total_nodes: int = 0
 
@@ -54,6 +56,7 @@ perft_divide :: proc(position: ^Position, depth: int) {
 		fmt.printfln("{} {}", move_str, nodes)
 	}
 
+	fmt.println()
 	fmt.println(total_nodes)
 }
 
@@ -81,10 +84,11 @@ perft_suite :: proc(t: ^testing.T) {
 		fen, ok := strings.split_iterator(&fields, ";")
 		if !ok do return
 
-		position := parse_fen(&fen) or_continue
+		position := parse_fen(fen) or_continue
         defer delete(position.irreversible_history)
 
-		log.infof("perft test {}\nFEN: {}", test_num, fen)
+		log.infof("perft test {}", test_num)
+		log.infof("FEN: {}",  fen)
 
 		for field in strings.split_iterator(&fields, ";") {
 			depths := strings.split(field, " ")

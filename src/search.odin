@@ -13,7 +13,6 @@ SearchInfo :: struct {
 	max_depth: int,
 	nodes: int,
 	max_nodes: int,
-	score: int,
 	mate: bool,
 	stop_flag: ^bool,
 	aborted: bool,
@@ -24,7 +23,6 @@ default_info :: proc(position: Position, stop_flag: ^bool) -> (info: SearchInfo)
 	info.max_depth = MAX_DEPTH
 	info.nodes = 0
 	info.max_nodes = builtin.max(int)
-	info.score = MIN_SCORE
 	info.mate = false
 	info.stop_flag = stop_flag
 	info.aborted = false
@@ -34,30 +32,33 @@ default_info :: proc(position: Position, stop_flag: ^bool) -> (info: SearchInfo)
 root_search :: proc(data: rawptr) {
 	info := (^SearchInfo)(data)
 	best_move: Move
-	best_score := MIN_SCORE
 
 	moves := gen_pseudo_legal_moves(&info.position)
 	defer delete(moves)
 	
-	depth := info.max_depth
+	iterative_deepening:
+	for depth in 1..=info.max_depth {
+		best_score := MIN_SCORE
 
-	for move in moves {
-		make_move(&info.position, move)
-		defer unmake_move(&info.position, move)
+		for move in moves {
+			make_move(&info.position, move)
+			defer unmake_move(&info.position, move)
 
-		if is_in_check(info.position.turn, &info.position) do continue
+			if is_in_check(info.position.turn, &info.position) do continue
 
-		score := -negamax(depth - 1, MIN_SCORE, MAX_SCORE, info)
+			score := -negamax(depth, MIN_SCORE, MAX_SCORE, info)
 
-		if info.aborted do break
+			if info.aborted do break iterative_deepening
 
-		if score > best_score {
-			fmt.println("updating best")
-			best_move, best_score = move, score
+			if score > best_score {
+				best_move, best_score = move, score
+			}
 		}
+
+		fmt.printfln("info depth %d nodes %d score cp %d",
+			depth, info.nodes, best_score)
 	}
 
-	fmt.printfln("score %d nodes %d", best_score, info.nodes)
 	fmt.println("bestmove", to_string(best_move, context.temp_allocator))
 
 	free(info)

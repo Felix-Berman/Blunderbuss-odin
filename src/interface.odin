@@ -5,12 +5,16 @@ import "core:bufio"
 import "core:fmt"
 import "core:strings"
 import "core:strconv"
+import "core:thread"
+import "base:intrinsics"
 
 uci_loop :: proc() {
 	stdin := os.stream_from_handle(os.stdin)
 	scanner: bufio.Scanner
 	bufio.scanner_init(&scanner, stdin)
 	defer bufio.scanner_destroy(&scanner)
+
+	stop_flag: bool
 
 	position := starting_position()
 	defer delete(position.irreversible_history)
@@ -49,9 +53,12 @@ uci_loop :: proc() {
 				fmt.println("Invalid position command:", full_line)	
 			}
 		case "go":
-			if ok := go(&line, &position); !ok {
+			stop_flag = false
+			if ok := go(&line, &position, &stop_flag); !ok {
 				fmt.println("Invalid go command:", full_line)
 			}
+		case "stop":
+			intrinsics.atomic_store_explicit(&stop_flag, true, .Relaxed)
 		case "perft":
 			if depth_str, ok := strings.split_iterator(&line, " "); ok {
 				depth := strconv.parse_int(depth_str) or_else 0
@@ -87,18 +94,21 @@ parse_position :: proc(line: ^string) -> (position: Position, ok: bool) {
 	return position, true
 }
 
-go :: proc(line: ^string, position: ^Position) -> bool {
-	depth: int
+go :: proc(line: ^string, position: ^Position, stop_flag: ^bool) -> bool {
+	info := default_info(position^, stop_flag)
 
 	for cmd in strings.split_iterator(line, " ") {
 		switch cmd {
 		case "depth":
 			depth_str := strings.split_iterator(line, " ") or_return
-			depth = strconv.parse_int(depth_str) or_return
+			info.max_depth = strconv.parse_int(depth_str) or_return
+		case "nodes":
+			nodes_str := strings.split_iterator(line, " ") or_return
+			info.max_nodes = strconv.parse_int(nodes_str) or_return
 		}
 	}
 
-	root_search(position, depth)
+	thread.run_with_data(new_clone(info), root_search, priority = .High)
 
 	return true
 }

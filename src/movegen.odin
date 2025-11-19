@@ -1,6 +1,5 @@
 package blunderbuss
 
-import "core:fmt"
 import "base:intrinsics"
 
 // Move Encoding: https://www.chessprogramming.org/Encoding_Moves

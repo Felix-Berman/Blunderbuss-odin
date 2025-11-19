@@ -54,7 +54,7 @@ uci_loop :: proc() {
 				perft_divide(&position, depth)
 			}
 		case "print":
-			fmt.println(to_string(position, context.temp_allocator))
+			display(position)
 		}
 
 		for word in strings.split_iterator(&line, " ") {

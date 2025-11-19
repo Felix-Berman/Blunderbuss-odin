@@ -1,5 +1,6 @@
 package blunderbuss
 
+import "core:fmt"
 import "base:intrinsics"
 
 // Move Encoding: https://www.chessprogramming.org/Encoding_Moves
@@ -192,6 +193,9 @@ gen_pawn_captures :: proc($side: Colour, position: ^Position, moves: ^[dynamic]M
     west_promotions := west_captures & (RANK_8 when side == .White else RANK_1)
     east_promotions := east_captures & (RANK_8 when side == .White else RANK_1)
 
+	west_captures &~= west_promotions
+	east_captures &~= east_promotions
+
     for west_captures > 0 {
         to := pop_lsb(&west_captures)
         from := to - west
@@ -254,7 +258,7 @@ gen_castling :: proc($side: Colour, position: ^Position, occ, atk: u64, moves: ^
 	kingside_check_mask :: 0x0e when side == .White else 0x0e << 56
     kingside_block_mask :: 0x06 when side == .White else 0x06 << 56
     queenside_check_mask :: 0x38 when side == .White else 0x38 << 56
-    queenside_block_mask :: 0x70 when side == .White else 0x30 << 56
+    queenside_block_mask :: 0x70 when side == .White else 0x70 << 56
 
     kingside: Castling = .WhiteKingside when side == .White else .BlackKingside
     queenside: Castling = .WhiteQueenside when side == .White else .BlackQueenside

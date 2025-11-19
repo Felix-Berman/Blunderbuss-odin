@@ -48,13 +48,14 @@ make_move :: proc(position: ^Position, move: Move) {
     }
 
     if .Promotion in flags {
-        if KNIGHT_PROMOTION <= flags {
+		switch flags &~ {.Capture} {
+		case KNIGHT_PROMOTION:
             position.pieces[us][.Knight] |= to_bb
-        } else if BISHOP_PROMOTION <= flags {
+		case BISHOP_PROMOTION:
             position.pieces[us][.Bishop] |= to_bb
-        } else if ROOK_PROMOTION <= flags {
+		case ROOK_PROMOTION:
             position.pieces[us][.Rook] |= to_bb
-        } else if QUEEN_PROMOTION <= flags {
+		case QUEEN_PROMOTION:
             position.pieces[us][.Queen] |= to_bb
         }
     } else {
@@ -73,18 +74,20 @@ make_move :: proc(position: ^Position, move: Move) {
         position.castling_rights &~= CASTLING_SIDE[us]
     } else if mover.type == .King {
         position.castling_rights &~= CASTLING_SIDE[us]
-    } else {
-        if from_to_bb & to_bitboard(Square.H1) != 0 {
-            position.castling_rights &~= {.WhiteKingside}
-        } else if from_to_bb & to_bitboard(Square.A1) != 0 {
-            position.castling_rights &~= {.WhiteQueenside}
-        } 
-        if from_to_bb & to_bitboard(Square.H8) != 0 {
-            position.castling_rights &~= {.BlackKingside}
-        } else if from_to_bb & to_bitboard(Square.A8) != 0 {
-            position.castling_rights &~= {.BlackQueenside}
-        }
     }
+
+	if from_to_bb & to_bitboard(Square.H1) != 0 {
+		position.castling_rights &~= {.WhiteKingside}
+	} else if from_to_bb & to_bitboard(Square.A1) != 0 {
+			position.castling_rights &~= {.WhiteQueenside}
+	} 
+
+	if from_to_bb & to_bitboard(Square.H8) != 0 {
+		position.castling_rights &~= {.BlackKingside}
+	} else if from_to_bb & to_bitboard(Square.A8) != 0 {
+		position.castling_rights &~= {.BlackQueenside}
+	}
+
 
     // always apply
     append(&position.irreversible_history, irreversibles)

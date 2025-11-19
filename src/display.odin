@@ -2,7 +2,6 @@ package blunderbuss
 
 import "core:strings"
 import "core:fmt"
-import "base:intrinsics"
 
 SQ_NAMES := [64]string{
     "h1", "g1", "f1", "e1", "d1", "c1", "b1", "a1",
@@ -32,8 +31,9 @@ to_string_sq_uint :: proc(sq: uint) -> string {
     return SQ_NAMES[sq]
 }
 
-to_string_bitboard :: proc(bitboard: u64, allocator := context.allocator) -> string {
-    builder := strings.builder_make(allocator)
+display_bitboard :: proc(bitboard: u64) {
+    builder := strings.builder_make()
+	defer strings.builder_destroy(&builder)
 
     for sq := 63; sq >= 0; sq -= 1 {
         if bitboard & (1 << uint(sq)) == 0 {
@@ -47,11 +47,12 @@ to_string_bitboard :: proc(bitboard: u64, allocator := context.allocator) -> str
         }
     }
 
-    return strings.to_string(builder)
+    fmt.println(strings.to_string(builder))
 }
 
-to_string_board :: proc(position: Position, allocator := context.allocator) -> string {
-    builder := strings.builder_make(allocator)
+display_board :: proc(position: Position) {
+    builder := strings.builder_make()
+	defer strings.builder_destroy(&builder)
 
     for rank := 7; rank >= 0; rank -= 1 {
         fmt.sbprintf(&builder, "%d ", rank + 1)
@@ -92,7 +93,7 @@ to_string_board :: proc(position: Position, allocator := context.allocator) -> s
 
     fmt.sbprintln(&builder, "Turn:", position.turn == Colour.White ? "w" : "b")
 
-    return strings.to_string(builder)
+    fmt.println(strings.to_string(builder))
 }
 
 to_string_move :: proc(move: Move, allocator := context.allocator) -> string {
@@ -115,10 +116,13 @@ to_string_move :: proc(move: Move, allocator := context.allocator) -> string {
 }
 
 to_string :: proc {
-    to_string_board, 
-    to_string_bitboard, 
     to_string_sq,
     to_string_sq_int,
     to_string_sq_uint,
     to_string_move,
+}
+
+display :: proc {
+	display_bitboard,
+	display_board
 }

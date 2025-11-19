@@ -24,6 +24,7 @@ uci_loop :: proc() {
 		}
 
 		line := bufio.scanner_text(&scanner)
+		full_line := line
 
 		command := strings.split_iterator(&line, " ") or_continue
 
@@ -45,8 +46,11 @@ uci_loop :: proc() {
 				delete(position.irreversible_history)
 				position = new_position
 			} else {
-				fmt.println("Invalid position command: ",
-					bufio.scanner_text(&scanner))	
+				fmt.println("Invalid position command:", full_line)	
+			}
+		case "go":
+			if ok := go(&line, &position); !ok {
+				fmt.println("Invalid go command:", full_line)
 			}
 		case "perft":
 			if depth_str, ok := strings.split_iterator(&line, " "); ok {
@@ -81,4 +85,20 @@ parse_position :: proc(line: ^string) -> (position: Position, ok: bool) {
 	}
 
 	return position, true
+}
+
+go :: proc(line: ^string, position: ^Position) -> bool{
+	depth: int
+
+	for cmd in strings.split_iterator(line, " ") {
+		switch cmd {
+		case "depth":
+			depth_str := strings.split_iterator(line, " ") or_return
+			depth = strconv.parse_int(depth_str) or_return
+		}
+	}
+
+	root_search(position, depth)
+
+	return true
 }

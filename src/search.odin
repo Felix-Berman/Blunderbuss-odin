@@ -21,16 +21,17 @@ root_search :: proc(position: ^Position, depth: int) {
 		score := -negamax(position, depth - 1, MIN_SCORE, MAX_SCORE)
 
 		if score > best_score {
-			best_move = move
+			best_move, best_score = move, score
 		}
 	}
 
+	fmt.println("score", best_score)
 	fmt.println("bestmove", to_string(best_move, context.temp_allocator))
 }
 
 negamax :: proc(position: ^Position, depth, alpha, beta: int) -> int {
 	alpha := alpha
-	best_score: int
+	best_score := MIN_SCORE
 
 	if depth == 0 {
 		return eval(position)

@@ -87,7 +87,7 @@ parse_position :: proc(line: ^string) -> (position: Position, ok: bool) {
 	return position, true
 }
 
-go :: proc(line: ^string, position: ^Position) -> bool{
+go :: proc(line: ^string, position: ^Position) -> bool {
 	depth: int
 
 	for cmd in strings.split_iterator(line, " ") {

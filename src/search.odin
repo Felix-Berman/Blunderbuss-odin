@@ -1,11 +1,12 @@
 package blunderbuss
 
 import "core:fmt"
-import "base:intrinsics"
-import "base:builtin"
 import "core:time"
 import "core:bufio"
 import "core:os"
+import "core:slice"
+import "base:intrinsics"
+import "base:builtin"
 
 MAX_SCORE :: 1_000_000_000
 MIN_SCORE :: -MAX_SCORE
@@ -17,29 +18,45 @@ SearchInfo :: struct {
 	nodes: int,
 	max_nodes: int,
 	mate: bool,
-	stop_flag: ^bool,
 	aborted: bool,
 	infinite: bool,
 	start_time: time.Tick,
 	allowed_time: time.Duration,
 }
 
-default_info :: proc(position: Position, stop_flag: ^bool) -> (info: SearchInfo) {
+default_info :: proc(position: Position) -> (info: SearchInfo) {
 	info.position = position
 	info.max_depth = MAX_DEPTH
 	info.max_nodes = builtin.max(int)
-	info.stop_flag = stop_flag
+
+	// perform deep copy
+	if position.irreversible_history != nil {
+		src := position.irreversible_history[:]
+		info.position.irreversible_history = make(
+			[dynamic]Irreversibles,
+			len(src),
+			cap(position.irreversible_history)
+		)
+		copy(info.position.irreversible_history[:], src)
+	}
 	return
 }
 
 root_search :: proc(data: rawptr) {
-	info := (^SearchInfo)(data)
-	best_move: Move
+	intrinsics.atomic_store(&is_searching, true)
+
+	info := cast(^SearchInfo)data
+	defer {
+		delete(info.position.irreversible_history)
+		free(info)
+	}
 
 	writer: bufio.Writer
 	stdout := os.stream_from_handle(os.stdout)
 	bufio.writer_init(&writer, stdout)
 	defer bufio.writer_destroy(&writer)
+
+	best_move: Move
 	
 	moves := gen_pseudo_legal_moves(&info.position)
 	defer delete(moves)
@@ -56,9 +73,12 @@ root_search :: proc(data: rawptr) {
 			if is_in_check(info.position.turn, &info.position) do continue
 
 			move_count += 1
-			currmove := to_string(move, context.temp_allocator)
+			currmove := to_string(move)
 			curr_info := fmt.aprintfln("info depth %d currmove %s currmovenumber %d",
-				depth, currmove, move_count, allocator = context.temp_allocator)
+				depth, currmove, move_count)
+			defer delete(currmove)
+			defer delete(curr_info)
+
 			bufio.writer_write_string(&writer, curr_info)
 			if time.tick_since(info.start_time) > time.Second {
 				bufio.writer_flush(&writer)
@@ -81,9 +101,11 @@ root_search :: proc(data: rawptr) {
 			depth, info.nodes, elapsed_ms, int(nps), best_score)
 	}
 
-	fmt.println("bestmove", to_string(best_move, context.temp_allocator))
+	move_str := to_string(best_move)
+	fmt.println("bestmove", move_str)
+	delete(move_str)
 
-	free(info)
+	intrinsics.atomic_store(&is_searching, false)
 }
 
 negamax :: proc(depth, alpha, beta: int, info: ^SearchInfo) -> int {
@@ -92,7 +114,7 @@ negamax :: proc(depth, alpha, beta: int, info: ^SearchInfo) -> int {
 			info.aborted = true
 			return 0
 		}
-		if intrinsics.atomic_load_explicit(info.stop_flag, .Relaxed) {
+		if intrinsics.atomic_load(&stop_flag) {
 			info.aborted = true
 			return 0
 		}

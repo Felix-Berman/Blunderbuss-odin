@@ -8,15 +8,15 @@ import "core:strings"
 import "core:strconv"
 import "core:thread"
 import "base:intrinsics"
-import "base:builtin"
+import "base:runtime"
+
+stop_flag, is_searching: bool
 
 uci_loop :: proc() {
 	stdin := os.stream_from_handle(os.stdin)
 	scanner: bufio.Scanner
 	bufio.scanner_init(&scanner, stdin)
 	defer bufio.scanner_destroy(&scanner)
-
-	stop_flag: bool
 
 	position := starting_position()
 	defer delete(position.irreversible_history)
@@ -55,8 +55,8 @@ uci_loop :: proc() {
 				fmt.println("Invalid position command:", full_line)	
 			}
 		case "go":
-			stop_flag = false
-			if ok := go(&line, &position, &stop_flag); !ok {
+			if intrinsics.atomic_load(&is_searching) do continue
+			if ok := go(&line, &position); !ok {
 				fmt.println("Invalid go command:", full_line)
 			}
 		case "stop":
@@ -68,10 +68,6 @@ uci_loop :: proc() {
 			}
 		case "print":
 			display(position)
-		}
-
-		for word in strings.split_iterator(&line, " ") {
-			fmt.println(word)
 		}
 	}
 
@@ -96,8 +92,9 @@ parse_position :: proc(line: ^string) -> (position: Position, ok: bool) {
 	return position, true
 }
 
-go :: proc(line: ^string, position: ^Position, stop_flag: ^bool) -> bool {
-	info := default_info(position^, stop_flag)
+go :: proc(line: ^string, position: ^Position) -> bool {
+	info := new(SearchInfo, runtime.default_allocator())
+	info^ = default_info(position^)
 	side_time, wtime, btime, side_inc, winc, binc, movetime: int
 	movestogo := 40
 
@@ -141,7 +138,8 @@ go :: proc(line: ^string, position: ^Position, stop_flag: ^bool) -> bool {
 
 	info.start_time = time.tick_now()
 
-	thread.run_with_data(new_clone(info), root_search, priority = .High)
+	stop_flag = false
+	thread.run_with_data(info, root_search, priority = .High)
 
 	return true
 }

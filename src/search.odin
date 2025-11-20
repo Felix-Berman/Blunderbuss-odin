@@ -4,6 +4,8 @@ import "core:fmt"
 import "base:intrinsics"
 import "base:builtin"
 import "core:time"
+import "core:bufio"
+import "core:os"
 
 MAX_SCORE :: 1_000_000_000
 MIN_SCORE :: -MAX_SCORE
@@ -34,6 +36,11 @@ root_search :: proc(data: rawptr) {
 	info := (^SearchInfo)(data)
 	best_move: Move
 
+	writer: bufio.Writer
+	stdout := os.stream_from_handle(os.stdout)
+	bufio.writer_init(&writer, stdout)
+	defer bufio.writer_destroy(&writer)
+	
 	moves := gen_pseudo_legal_moves(&info.position)
 	defer delete(moves)
 	
@@ -41,11 +48,21 @@ root_search :: proc(data: rawptr) {
 	for depth in 1..=info.max_depth {
 		best_score := MIN_SCORE
 
+		move_count := 0
 		for move in moves {
 			make_move(&info.position, move)
 			defer unmake_move(&info.position, move)
 
 			if is_in_check(info.position.turn, &info.position) do continue
+
+			move_count += 1
+			currmove := to_string(move, context.temp_allocator)
+			curr_info := fmt.aprintfln("info depth %d currmove %s currmovenumber %d",
+				depth, currmove, move_count, allocator = context.temp_allocator)
+			bufio.writer_write_string(&writer, curr_info)
+			if time.tick_since(info.start_time) > time.Second {
+				bufio.writer_flush(&writer)
+			}
 
 			score := -negamax(depth, MIN_SCORE, MAX_SCORE, info)
 
@@ -55,6 +72,7 @@ root_search :: proc(data: rawptr) {
 				best_move, best_score = move, score
 			}
 		}
+		bufio.writer_reset(&writer, stdout)
 
 		elapsed := time.tick_since(info.start_time)
 		elapsed_ms := int(time.duration_milliseconds(elapsed))

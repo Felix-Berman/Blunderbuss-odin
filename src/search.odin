@@ -3,6 +3,7 @@ package blunderbuss
 import "core:fmt"
 import "base:intrinsics"
 import "base:builtin"
+import "core:time"
 
 MAX_SCORE :: 1_000_000_000
 MIN_SCORE :: -MAX_SCORE
@@ -16,16 +17,16 @@ SearchInfo :: struct {
 	mate: bool,
 	stop_flag: ^bool,
 	aborted: bool,
+	infinite: bool,
+	start_time: time.Tick,
+	allowed_time: time.Duration,
 }
 
 default_info :: proc(position: Position, stop_flag: ^bool) -> (info: SearchInfo) {
 	info.position = position
 	info.max_depth = MAX_DEPTH
-	info.nodes = 0
 	info.max_nodes = builtin.max(int)
-	info.mate = false
 	info.stop_flag = stop_flag
-	info.aborted = false
 	return
 }
 
@@ -55,8 +56,11 @@ root_search :: proc(data: rawptr) {
 			}
 		}
 
-		fmt.printfln("info depth %d nodes %d score cp %d",
-			depth, info.nodes, best_score)
+		elapsed := time.tick_since(info.start_time)
+		elapsed_ms := int(time.duration_milliseconds(elapsed))
+		nps := f64(info.nodes) / time.duration_seconds(elapsed)
+		fmt.printfln("info depth %d nodes %d time %d nps %d score cp %d",
+			depth, info.nodes, elapsed_ms, int(nps), best_score)
 	}
 
 	fmt.println("bestmove", to_string(best_move, context.temp_allocator))
@@ -66,12 +70,15 @@ root_search :: proc(data: rawptr) {
 
 negamax :: proc(depth, alpha, beta: int, info: ^SearchInfo) -> int {
 	if info.nodes % 2048 == 0 {
+		if !info.infinite && time.tick_since(info.start_time) >= info.allowed_time {
+			info.aborted = true
+			return 0
+		}
 		if intrinsics.atomic_load_explicit(info.stop_flag, .Relaxed) {
 			info.aborted = true
 			return 0
 		}
-
-		if info.nodes > info.max_nodes {
+		if info.nodes >= info.max_nodes {
 			info.aborted = true
 			return 0
 		}

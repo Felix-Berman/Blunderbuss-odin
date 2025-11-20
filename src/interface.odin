@@ -1,5 +1,6 @@
 package blunderbuss
 
+import "core:time"
 import "core:os"
 import "core:bufio"
 import "core:fmt"
@@ -7,6 +8,7 @@ import "core:strings"
 import "core:strconv"
 import "core:thread"
 import "base:intrinsics"
+import "base:builtin"
 
 uci_loop :: proc() {
 	stdin := os.stream_from_handle(os.stdin)
@@ -96,19 +98,56 @@ parse_position :: proc(line: ^string) -> (position: Position, ok: bool) {
 
 go :: proc(line: ^string, position: ^Position, stop_flag: ^bool) -> bool {
 	info := default_info(position^, stop_flag)
+	side_time, wtime, btime, side_inc, winc, binc, movetime: int
+	movestogo := 40
 
 	for cmd in strings.split_iterator(line, " ") {
 		switch cmd {
 		case "depth":
-			depth_str := strings.split_iterator(line, " ") or_return
-			info.max_depth = strconv.parse_int(depth_str) or_return
+			info.max_depth = get_next_int(line) or_return
 		case "nodes":
-			nodes_str := strings.split_iterator(line, " ") or_return
-			info.max_nodes = strconv.parse_int(nodes_str) or_return
+			info.max_nodes = get_next_int(line) or_return
+		case "wtime":
+			wtime = get_next_int(line) or_return
+		case "btime":
+			btime = get_next_int(line) or_return
+		case "winc":
+			winc = get_next_int(line) or_return
+		case "binc":
+			binc = get_next_int(line) or_return
+		case "movestogo":
+			movestogo = get_next_int(line) or_return
+		case "movetime":
+			movetime = get_next_int(line) or_return
+		case "infinite":
+			info.infinite = true
 		}
 	}
+
+	if position.turn == .White {
+		side_time, side_inc = wtime, winc
+	} else {
+		side_time, side_inc = btime, binc
+	}
+
+	if movetime != 0 {
+		info.allowed_time = time.Duration(movetime) * time.Millisecond
+	} else if side_time != 0 {
+		info.allowed_time = time.Duration(side_time/movestogo + side_inc/2)
+		info.allowed_time *= time.Millisecond
+	} else {
+		info.infinite = true
+	}
+
+	info.start_time = time.tick_now()
 
 	thread.run_with_data(new_clone(info), root_search, priority = .High)
 
 	return true
+}
+
+get_next_int :: proc(line: ^string) -> (i: int, ok: bool) {
+	str := strings.split_iterator(line, " ") or_return
+	i = strconv.parse_int(str) or_return
+	return i, true
 }

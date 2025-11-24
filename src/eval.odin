@@ -18,7 +18,7 @@ eval :: proc(position: ^Position) -> int {
 			bb := bb
 			for bb > 0 {
 				sq := pop_lsb(&bb)
-				if side == .Black {
+				if side == .White {
 					sq ~= 56
 				}
 

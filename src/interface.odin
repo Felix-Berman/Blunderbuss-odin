@@ -40,6 +40,7 @@ uci_loop :: proc() {
 		case "uci":
 			fmt.println("id name Blunderbuss")
 			fmt.println("id author Felix Berman")
+			fmt.println("uciok")
 		case "debug":
 		case "isready":
 			fmt.println("readyok")
@@ -86,6 +87,7 @@ parse_position :: proc(line: ^string) -> (position: Position, ok: bool) {
 	}
 
 	for move in strings.split_iterator(line, " ") {
+		if move == "moves" do continue
 		make_move_str(&position, move) or_return
 	}
 

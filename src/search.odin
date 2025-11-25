@@ -1,16 +1,16 @@
 package blunderbuss
 
+import "core:mem"
 import "core:fmt"
 import "core:time"
 import "core:bufio"
 import "core:os"
-import "core:slice"
 import "base:intrinsics"
 import "base:builtin"
 
 MAX_SCORE :: 1_000_000_000
 MIN_SCORE :: -MAX_SCORE
-MAX_DEPTH :: 64
+MAX_DEPTH :: 32
 
 SearchInfo :: struct {
 	position: Position,
@@ -22,6 +22,8 @@ SearchInfo :: struct {
 	infinite: bool,
 	start_time: time.Tick,
 	allowed_time: time.Duration,
+	pv_table: [MAX_DEPTH][MAX_DEPTH]Move,
+	pv_length: [MAX_DEPTH]int,
 }
 
 default_info :: proc(position: Position) -> (info: SearchInfo) {
@@ -56,16 +58,17 @@ root_search :: proc(data: rawptr) {
 	bufio.writer_init(&writer, stdout)
 	defer bufio.writer_destroy(&writer)
 
-	best_move: Move
-	
 	us := info.position.turn
 	moves := gen_pseudo_legal_moves(&info.position)
 	defer delete(moves)
 	
+	best_move: Move
+	ply := 0
 	iterative_deepening:
 	for depth in 1..=info.max_depth {
 		best_score := MIN_SCORE
 
+		info.pv_length = {}
 		move_count := 0
 		for move in moves {
 			make_move(&info.position, move)
@@ -85,11 +88,12 @@ root_search :: proc(data: rawptr) {
 				bufio.writer_flush(&writer)
 			}
 
-			score := -negamax(depth - 1, MIN_SCORE, MAX_SCORE, info)
+			score := -negamax(MIN_SCORE, MAX_SCORE, depth - 1, ply + 1, info)
 
 			if info.aborted do break iterative_deepening
 
 			if score > best_score {
+				update_pv(ply, move, info)
 				best_move, best_score = move, score
 			}
 		}
@@ -98,8 +102,11 @@ root_search :: proc(data: rawptr) {
 		elapsed := time.tick_since(info.start_time)
 		elapsed_ms := int(time.duration_milliseconds(elapsed))
 		nps := f64(info.nodes) / time.duration_seconds(elapsed)
-		fmt.printfln("info depth %d nodes %d time %d nps %d score cp %d",
-			depth, info.nodes, elapsed_ms, int(nps), best_score)
+		len := info.pv_length[0]
+		pv_str := to_string(info.pv_table[0][:len])
+		fmt.printfln("info depth %d nodes %d time %d nps %d score cp %d pv %s",
+			depth, info.nodes, elapsed_ms, int(nps), best_score, pv_str)
+		delete(pv_str)
 	}
 
 	move_str := to_string(best_move)
@@ -109,7 +116,7 @@ root_search :: proc(data: rawptr) {
 	intrinsics.atomic_store(&is_searching, false)
 }
 
-negamax :: proc(depth, alpha, beta: int, info: ^SearchInfo) -> int {
+negamax :: proc(alpha, beta, depth, ply: int, info: ^SearchInfo) -> int {
 	if info.nodes % 2048 == 0 {
 		if !info.infinite && time.tick_since(info.start_time) >= info.allowed_time {
 			info.aborted = true
@@ -132,6 +139,7 @@ negamax :: proc(depth, alpha, beta: int, info: ^SearchInfo) -> int {
 
 	alpha := alpha
 	best_score := MIN_SCORE
+	info.pv_length[ply] = 0
 
 	us := info.position.turn
 	moves := gen_pseudo_legal_moves(&info.position)
@@ -143,7 +151,7 @@ negamax :: proc(depth, alpha, beta: int, info: ^SearchInfo) -> int {
 
 		if is_in_check(us, &info.position) do continue
 
-		score := -negamax(depth - 1, -beta, -alpha, info)
+		score := -negamax(-beta, -alpha, depth - 1, ply + 1, info)
 
 		if info.aborted do return 0
 		
@@ -152,6 +160,7 @@ negamax :: proc(depth, alpha, beta: int, info: ^SearchInfo) -> int {
 
 			if score > alpha {
 				alpha = score
+				update_pv(ply, move, info)
 			}
 		}
 
@@ -161,4 +170,14 @@ negamax :: proc(depth, alpha, beta: int, info: ^SearchInfo) -> int {
 	}
 
 	return best_score
+}
+
+update_pv :: proc(ply: int, move: Move, info: ^SearchInfo) {
+	info.pv_table[ply][ply] = move
+	info.pv_length[ply] = info.pv_length[ply + 1] + 1
+	mem.copy_non_overlapping(
+		&info.pv_table[ply][ply + 1],
+		&info.pv_table[ply + 1][ply + 1],
+		info.pv_length[ply + 1] * size_of(Move)
+	)
 }

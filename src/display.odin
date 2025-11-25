@@ -120,15 +120,26 @@ to_string_move :: proc(move: Move, allocator := context.allocator) -> string {
     return strings.to_string(builder)
 }
 
+to_string_movelist :: proc(list: []Move, allocator := context.allocator) -> string {
+	builder := strings.builder_make(allocator)
+	for move in list {
+		if move == NULL_MOVE do break
+		fmt.sbprintf(&builder, "%s ", to_string(move, allocator))
+	}
+
+	return strings.trim_right_space(strings.to_string(builder))
+}
+
 to_string :: proc {
     to_string_sq,
     to_string_sq_int,
     to_string_sq_uint,
     to_string_move,
 	to_string_piece,
+	to_string_movelist,
 }
 
 display :: proc {
 	display_bitboard,
-	display_board
+	display_board,
 }

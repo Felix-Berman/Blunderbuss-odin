@@ -22,6 +22,8 @@ Move :: bit_field u16 {
     flags: uint | 4,
 }
 
+NULL_MOVE :: Move{}
+
 set_flags :: proc(move: ^Move, flags: MoveFlagSet) {
     move.flags = transmute(uint) flags
 }

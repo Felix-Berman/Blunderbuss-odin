@@ -31,6 +31,11 @@ to_string_sq_uint :: proc(sq: uint) -> string {
     return SQ_NAMES[sq]
 }
 
+to_string_piece :: proc(piece: Piece) -> string {
+	char := piece_chars[piece.colour][piece.type]
+	return fmt.tprintf("%r", char)
+}
+
 display_bitboard :: proc(bitboard: u64) {
     builder := strings.builder_make()
 	defer strings.builder_destroy(&builder)
@@ -120,6 +125,7 @@ to_string :: proc {
     to_string_sq_int,
     to_string_sq_uint,
     to_string_move,
+	to_string_piece,
 }
 
 display :: proc {

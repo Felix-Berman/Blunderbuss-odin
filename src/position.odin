@@ -73,7 +73,7 @@ toggle :: proc(colour: Colour) -> Colour {
 
 piece_on :: proc(position: ^Position, sq: $T) -> (Piece, bool) 
     where intrinsics.type_is_numeric(T) {
-    
+
     for colour in Colour {
         for type in PieceType {
             if position.pieces[colour][type] & to_bitboard(sq) != 0 {

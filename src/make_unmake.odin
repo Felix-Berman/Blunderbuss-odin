@@ -1,5 +1,6 @@
 package blunderbuss
 
+import "core:fmt"
 import "core:strings"
 
 make_move :: proc(position: ^Position, move: Move) {
@@ -17,7 +18,10 @@ make_move :: proc(position: ^Position, move: Move) {
     }
 
     mover, ok := piece_on(position, move.from)
-    assert(ok && mover.colour == us)
+	assert(ok, fmt.tprintf("Attempt to move from empty square: %s",
+			to_string(move)))
+    assert(mover.colour == us, fmt.tprintf(
+			"Mover colour does not align with turn: %s", to_string(move)))
 
     them := toggle(us)
     flags := get_flags(move)
@@ -35,7 +39,13 @@ make_move :: proc(position: ^Position, move: Move) {
         irreversibles.captured_piece = Piece{them, .Pawn}
     } else if .Capture in flags {
         captured, ok := piece_on(position, move.to)
-        assert(ok && captured.colour == them)
+		assert(ok, fmt.tprintf(
+				"Attempt to capture empty square: %s", to_string(move)))
+        assert(captured.colour == them, fmt.tprintf(
+				"Captured colour does not align with opponent after: %s",
+				to_string(move)))
+		assert(captured.type != .King, fmt.tprintf(
+				"Illegal capture of king: %s", to_string(move) ))
         position.pieces[them][captured.type] &~= to_bb
         position.occupancy[them] &~= to_bb
         irreversibles.captured_piece = captured

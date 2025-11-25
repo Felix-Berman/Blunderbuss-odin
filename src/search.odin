@@ -58,6 +58,7 @@ root_search :: proc(data: rawptr) {
 
 	best_move: Move
 	
+	us := info.position.turn
 	moves := gen_pseudo_legal_moves(&info.position)
 	defer delete(moves)
 	
@@ -70,7 +71,7 @@ root_search :: proc(data: rawptr) {
 			make_move(&info.position, move)
 			defer unmake_move(&info.position, move)
 
-			if is_in_check(info.position.turn, &info.position) do continue
+			if is_in_check(us, &info.position) do continue
 
 			move_count += 1
 			currmove := to_string(move)
@@ -84,7 +85,7 @@ root_search :: proc(data: rawptr) {
 				bufio.writer_flush(&writer)
 			}
 
-			score := -negamax(depth, MIN_SCORE, MAX_SCORE, info)
+			score := -negamax(depth - 1, MIN_SCORE, MAX_SCORE, info)
 
 			if info.aborted do break iterative_deepening
 
@@ -124,14 +125,15 @@ negamax :: proc(depth, alpha, beta: int, info: ^SearchInfo) -> int {
 		}
 	}
 
+	info.nodes += 1
 	if depth == 0 {
 		return eval(&info.position)
 	}
 
 	alpha := alpha
 	best_score := MIN_SCORE
-	info.nodes += 1
 
+	us := info.position.turn
 	moves := gen_pseudo_legal_moves(&info.position)
 	defer delete(moves)
 
@@ -139,7 +141,7 @@ negamax :: proc(depth, alpha, beta: int, info: ^SearchInfo) -> int {
 		make_move(&info.position, move)
 		defer unmake_move(&info.position, move)
 
-		if is_in_check(info.position.turn, &info.position) do continue
+		if is_in_check(us, &info.position) do continue
 
 		score := -negamax(depth - 1, -beta, -alpha, info)
 

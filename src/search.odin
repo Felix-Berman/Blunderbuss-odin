@@ -62,10 +62,12 @@ root_search :: proc(data: rawptr) {
 	moves := gen_pseudo_legal_moves(&info.position)
 	defer delete(moves)
 	
+	found_mate: bool
 	best_move: Move
 	ply := 0
 	iterative_deepening:
 	for depth in 1..=info.max_depth {
+		if found_mate do break
 		best_score := MIN_SCORE
 
 		info.pv_length = {}
@@ -100,13 +102,22 @@ root_search :: proc(data: rawptr) {
 		}
 		bufio.writer_reset(&writer, stdout)
 
+		score_type: string
+		if builtin.abs(best_score) == MAX_SCORE {
+			score_type = "mate"
+			best_score = info.pv_length[0]
+			found_mate = true
+		} else {
+			score_type = "cp"
+		}
+
 		elapsed := time.tick_since(info.start_time)
 		elapsed_ms := int(time.duration_milliseconds(elapsed))
 		nps := f64(info.nodes) / time.duration_seconds(elapsed)
 		len := info.pv_length[0]
 		pv_str := to_string(info.pv_table[0][:len])
-		fmt.printfln("info depth %d nodes %d time %d nps %d score cp %d pv %s",
-			depth, info.nodes, elapsed_ms, int(nps), best_score, pv_str)
+		fmt.printfln("info depth %d nodes %d time %d nps %d score %s %d pv %s",
+			depth, info.nodes, elapsed_ms, int(nps), score_type, best_score, pv_str)
 		delete(pv_str)
 	}
 

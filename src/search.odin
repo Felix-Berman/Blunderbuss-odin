@@ -70,7 +70,8 @@ root_search :: proc(data: rawptr) {
 
 		info.pv_length = {}
 		move_count := 0
-		for move in moves {
+		for i in 0..<len(moves) {
+			move := pick_move(moves[i:], ply, info)
 			make_move(&info.position, move)
 			defer unmake_move(&info.position, move)
 
@@ -145,7 +146,8 @@ negamax :: proc(alpha, beta, depth, ply: int, info: ^SearchInfo) -> int {
 	moves := gen_pseudo_legal_moves(&info.position)
 	defer delete(moves)
 
-	for move in moves {
+	for i in 0..<len(moves) {
+		move := pick_move(moves[i:], ply, info)
 		make_move(&info.position, move)
 		defer unmake_move(&info.position, move)
 
@@ -180,4 +182,17 @@ update_pv :: proc(ply: int, move: Move, info: ^SearchInfo) {
 		&info.pv_table[ply + 1][ply + 1],
 		info.pv_length[ply + 1] * size_of(Move)
 	)
+}
+
+pick_move :: proc(movelist: []Move, ply: int, info: ^SearchInfo) -> Move {
+	for move, i in movelist {
+		if move == NULL_MOVE do break
+		if move == info.pv_table[0][ply] {
+			move_temp := movelist[0]
+			movelist[0] = move
+			movelist[i] = move_temp
+		}
+	}
+
+	return movelist[0]
 }

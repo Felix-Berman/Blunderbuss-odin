@@ -7,13 +7,24 @@ import "base:intrinsics"
 
 STARTING_FEN :: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
-Colour :: enum{White, Black}
-PieceType :: enum{Pawn, Knight, Bishop, Rook, Queen, King}
-Piece :: struct{colour: Colour, type: PieceType}
-Castling :: enum{WhiteKingside, WhiteQueenside, BlackKingside, BlackQueenside}
+Colour :: enum u8 {White, Black}
+PieceType :: enum u8 {Pawn, Knight, Bishop, Rook, Queen, King}
+Castling :: enum u8 {WKingside, WQueenside, BKingside, BQueenside}
 CASTLING_SIDE: [Colour]bit_set[Castling] = {
-	.White = {.WhiteKingside, .WhiteQueenside},
-	.Black = {.BlackKingside, .BlackQueenside}
+	.White = {.WKingside, .WQueenside},
+	.Black = {.BKingside, .BQueenside}
+}
+
+Piece :: bit_field u8 {
+	colour: Colour | 1,
+	type: PieceType | 3,
+}
+
+make_piece :: proc(colour: Colour, type: PieceType) -> Piece {
+	return {
+		type = type,
+		colour = colour,
+	}
 }
 
 Position :: struct {
@@ -21,10 +32,11 @@ Position :: struct {
     occupancy: [Colour]u64,
     atk_masks: [Colour]u64,
     turn: Colour,
-    castling_rights: bit_set[Castling],
+    castling: bit_set[Castling],
     ep_sq: int,
     halfmove_clk: uint,
     ply: uint,
+	hash: u64,
 
     irreversible_history: [dynamic]Irreversibles,
 }
@@ -33,7 +45,8 @@ Irreversibles :: struct {
     ep_sq: int,
     captured_piece: Maybe(Piece),
     castling_rights: bit_set[Castling],
-    halfmove_clk: uint
+    halfmove_clk: uint,
+	hash: u64,
 }
 
 starting_position :: proc() -> (position: Position) {
@@ -52,14 +65,15 @@ starting_position :: proc() -> (position: Position) {
 
     position.occupancy = [Colour]u64{.White = 0xffff, .Black = 0xffff << (6*8)}
     position.turn = .White
-    position.castling_rights = ~ {}  // inverse of empty set
+    position.castling = ~ {}  // inverse of empty set
     position.ep_sq = 64
     position.halfmove_clk = 0
     position.ply = 0
 
     gen_attack_mask(.White, &position, occupied(&position))
     gen_attack_mask(.Black, &position, occupied(&position))
-    
+	position.hash = zobrist_hash(position)
+
     return
 }
 
@@ -77,7 +91,7 @@ piece_on :: proc(position: ^Position, sq: $T) -> (Piece, bool)
     for colour in Colour {
         for type in PieceType {
             if position.pieces[colour][type] & to_bitboard(sq) != 0 {
-                return Piece{colour, type}, true
+                return make_piece(colour, type), true
             }
         }
     }
@@ -136,13 +150,13 @@ parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {
     for char in castling {
         switch char {
             case 'K':
-                position.castling_rights |= {.WhiteKingside}
+                position.castling |= {.WKingside}
             case 'k':
-                position.castling_rights |= {.BlackKingside}
+                position.castling |= {.BKingside}
             case 'Q':
-                position.castling_rights |= {.WhiteQueenside}
+                position.castling |= {.WQueenside}
             case 'q':
-                position.castling_rights |= {.BlackQueenside}
+                position.castling |= {.BQueenside}
         }
     }
 
@@ -166,6 +180,7 @@ parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {
     occ := occupied(&position)
     gen_attack_mask(.White, &position, occ)
     gen_attack_mask(.Black, &position, occ)
+	position.hash = zobrist_hash(position)
 
     return position, true
 }

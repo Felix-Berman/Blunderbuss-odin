@@ -60,7 +60,7 @@ perft_divide :: proc(position: ^Position, depth: int) {
 	fmt.println(total_nodes)
 }
 
-test_range :: [2]int{49, 126}
+test_range :: [2]int{1, 126}
 
 @(test)
 perft_suite :: proc(t: ^testing.T) {

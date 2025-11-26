@@ -261,12 +261,12 @@ gen_castling :: proc($side: Colour, position: ^Position, occ, atk: u64, moves: ^
     queenside_check_mask :: 0x38 when side == .White else 0x38 << 56
     queenside_block_mask :: 0x70 when side == .White else 0x70 << 56
 
-    kingside: Castling = .WhiteKingside when side == .White else .BlackKingside
-    queenside: Castling = .WhiteQueenside when side == .White else .BlackQueenside
+    kingside: Castling = .WKingside when side == .White else .BKingside
+    queenside: Castling = .WQueenside when side == .White else .BQueenside
 
-    kingside_legal := kingside in position.castling_rights &&
+    kingside_legal := kingside in position.castling &&
 		kingside_check_mask & atk == 0 && kingside_block_mask & occ == 0
-    queenside_legal := queenside in position.castling_rights &&
+    queenside_legal := queenside in position.castling &&
 		queenside_check_mask & atk == 0 && queenside_block_mask & occ == 0
 
     if kingside_legal {

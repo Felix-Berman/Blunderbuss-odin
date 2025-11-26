@@ -82,10 +82,10 @@ display_board :: proc(position: Position) {
     fmt.sbprintln(&builder, "  a b c d e f g h")
 
     fmt.sbprint(&builder, "Castling: ")
-    if .WhiteKingside in position.castling_rights { fmt.sbprint(&builder, 'K') }
-    if .WhiteQueenside in position.castling_rights { fmt.sbprint(&builder, 'Q') }
-    if .BlackKingside in position.castling_rights { fmt.sbprint(&builder, 'k') }
-    if .BlackQueenside in position.castling_rights { fmt.sbprint(&builder, 'q') }
+    if .WKingside in position.castling { fmt.sbprint(&builder, 'K') }
+    if .WQueenside in position.castling { fmt.sbprint(&builder, 'Q') }
+    if .BKingside in position.castling { fmt.sbprint(&builder, 'k') }
+    if .BQueenside in position.castling { fmt.sbprint(&builder, 'q') }
     fmt.sbprintln(&builder)
 
     if position.ep_sq != 64 {
@@ -97,6 +97,7 @@ display_board :: proc(position: Position) {
     }
 
     fmt.sbprintln(&builder, "Turn:", position.turn == Colour.White ? "w" : "b")
+	fmt.sbprintln(&builder, "Hash:", position.hash)
 
     fmt.println(strings.to_string(builder))
 }

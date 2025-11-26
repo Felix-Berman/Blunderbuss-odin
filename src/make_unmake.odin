@@ -13,8 +13,9 @@ make_move :: proc(position: ^Position, move: Move) {
     irreversibles := Irreversibles{
         position.ep_sq,
         nil,
-        position.castling_rights,
-        position.halfmove_clk
+        position.castling,
+        position.halfmove_clk,
+		position.hash,
     }
 
     mover, ok := piece_on(position, move.from)
@@ -31,12 +32,16 @@ make_move :: proc(position: ^Position, move: Move) {
 
     position.pieces[us][mover.type] &~= from_bb // wait to toggle to_bb in case of promotion
     position.occupancy[us] ~= from_to_bb
+	position.hash ~= zobrist_p_sq(mover, move.from)
 
     if flags == EP_CAPTURE {
-        ep_target := to_bitboard(position.ep_sq - forward)
+		captured := make_piece(them, .Pawn)
+		ep_target_sq := position.ep_sq - forward
+        ep_target := to_bitboard(ep_target_sq)
         position.pieces[them][.Pawn] &~= ep_target
         position.occupancy[them] &~= ep_target
-        irreversibles.captured_piece = Piece{them, .Pawn}
+		position.hash ~= zobrist_p_sq(captured, ep_target_sq)
+        irreversibles.captured_piece = captured
     } else if .Capture in flags {
         captured, ok := piece_on(position, move.to)
 		assert(ok, fmt.tprintf(
@@ -48,61 +53,104 @@ make_move :: proc(position: ^Position, move: Move) {
 				"Illegal capture of king: %s", to_string(move) ))
         position.pieces[them][captured.type] &~= to_bb
         position.occupancy[them] &~= to_bb
+		position.hash ~= zobrist_p_sq(captured, move.to)
         irreversibles.captured_piece = captured
     }
 
-    // ep_sq must be reset before double push to distinguish between value from this move or previous move
-    position.ep_sq = 64 
+	if position.ep_sq < 64 {
+		position.hash ~= ZOBRIST_RANDS[EP_OFFSET + position.ep_sq % 8]
+		position.ep_sq = 64
+	}
+
     if flags == DOUBLE_PUSH {
         position.ep_sq = int(move.from) + forward
+		position.hash ~= ZOBRIST_RANDS[EP_OFFSET + position.ep_sq % 8]
     }
 
     if .Promotion in flags {
 		switch flags &~ {.Capture} {
 		case KNIGHT_PROMOTION:
             position.pieces[us][.Knight] |= to_bb
+			position.hash ~= zobrist_p_sq(make_piece(us, .Knight), move.to)
 		case BISHOP_PROMOTION:
             position.pieces[us][.Bishop] |= to_bb
+			position.hash ~= zobrist_p_sq(make_piece(us, .Bishop), move.to)
 		case ROOK_PROMOTION:
             position.pieces[us][.Rook] |= to_bb
+			position.hash ~= zobrist_p_sq(make_piece(us, .Rook), move.to)
 		case QUEEN_PROMOTION:
             position.pieces[us][.Queen] |= to_bb
+			position.hash ~= zobrist_p_sq(make_piece(us, .Queen), move.to)
         }
     } else {
         position.pieces[us][mover.type] |= to_bb
+		position.hash ~= zobrist_p_sq(mover, move.to)
     }
 
     if flags == KING_CASTLE {
         rook_from_to: u64 = 0x05 if us == .White else 0x05 << 56
         position.pieces[us][.Rook] ~= rook_from_to
         position.occupancy[us] ~= rook_from_to
-        position.castling_rights &~= CASTLING_SIDE[us]
+		for rook_from_to > 0 {
+			sq := pop_lsb(&rook_from_to)
+			position.hash ~= zobrist_p_sq(make_piece(us, .Rook), sq)
+		}
     } else if flags == QUEEN_CASTLE {
         rook_from_to: u64 = 0x90 if us == .White else 0x90 << 56
         position.pieces[us][.Rook] ~= rook_from_to
         position.occupancy[us] ~= rook_from_to
-        position.castling_rights &~= CASTLING_SIDE[us]
-    } else if mover.type == .King {
-        position.castling_rights &~= CASTLING_SIDE[us]
+		for rook_from_to > 0 {
+			sq := pop_lsb(&rook_from_to)
+			position.hash ~= zobrist_p_sq(make_piece(us, .Rook), sq)
+		}
+    } 
+
+	if mover.type == .King {
+		for right in CASTLING_SIDE[us] {
+			if right in position.castling {
+				position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(right)]
+			}
+		}
+        position.castling &~= CASTLING_SIDE[us]
     }
 
-	if from_to_bb & to_bitboard(Square.H1) != 0 {
-		position.castling_rights &~= {.WhiteKingside}
-	} else if from_to_bb & to_bitboard(Square.A1) != 0 {
-			position.castling_rights &~= {.WhiteQueenside}
+	if .WKingside in position.castling && from_to_bb & to_bitboard(Square.H1) != 0 {
+		position.castling &~= {.WKingside}
+		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.WKingside)]
+	} else if .WQueenside in position.castling && from_to_bb & to_bitboard(Square.A1) != 0 {
+			position.castling &~= {.WQueenside}
+		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.WQueenside)]
 	} 
 
-	if from_to_bb & to_bitboard(Square.H8) != 0 {
-		position.castling_rights &~= {.BlackKingside}
-	} else if from_to_bb & to_bitboard(Square.A8) != 0 {
-		position.castling_rights &~= {.BlackQueenside}
+	if .BKingside in position.castling && from_to_bb & to_bitboard(Square.H8) != 0 {
+		position.castling &~= {.BKingside}
+		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.BKingside)]
+	} else if .BQueenside in position.castling && from_to_bb & to_bitboard(Square.A8) != 0 {
+		position.castling &~= {.BQueenside}
+		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.BQueenside)]
 	}
-
 
     // always apply
     append(&position.irreversible_history, irreversibles)
     position.turn = them
+	position.hash ~= ZOBRIST_RANDS[TURN_OFFSET]
     position.ply += 1
+
+	when ODIN_DEBUG {
+		hash := zobrist_hash(position^)
+		if position.hash != hash {
+			fmt.println("Discrepancy between generated and updated hash")
+			fmt.println(move)
+			display(position^)
+
+			for rand, i in ZOBRIST_RANDS {
+				if hash ~ rand == position.hash {
+					fmt.println("Error corrected by zobrist index:", i)
+				}
+			}
+			assert(false)
+		}
+	}
 }
 
 unmake_move :: proc(position: ^Position, move: Move) {
@@ -112,8 +160,9 @@ unmake_move :: proc(position: ^Position, move: Move) {
 
     irreversibles := pop(&position.irreversible_history)
     position.ep_sq = irreversibles.ep_sq
-    position.castling_rights = irreversibles.castling_rights
+    position.castling = irreversibles.castling_rights
     position.halfmove_clk = irreversibles.halfmove_clk
+	position.hash = irreversibles.hash
 
     mover, ok := piece_on(position, move.to)
     assert(ok && mover.colour == us)

@@ -35,18 +35,19 @@ Position :: struct {
     castling: bit_set[Castling],
     ep_sq: int,
     halfmove_clk: uint,
-    ply: uint,
+    ply: int,
 	hash: u64,
-
-    irreversible_history: [dynamic]Irreversibles,
+	last_irreversible_ply: int,
+    history: [dynamic]HistoryData,
 }
 
-Irreversibles :: struct {
+HistoryData :: struct {
     ep_sq: int,
     captured_piece: Maybe(Piece),
     castling_rights: bit_set[Castling],
     halfmove_clk: uint,
 	hash: u64,
+	last_irreversible_ply: int
 }
 
 starting_position :: proc() -> (position: Position) {
@@ -174,8 +175,8 @@ parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {
 	fullmove_clk := strings.split_iterator(&fen, " ") or_else "1"
 
     position.halfmove_clk = strconv.parse_uint(halfmove_clk) or_else 0
-    fullmove := strconv.parse_uint(fullmove_clk) or_else 1
-    position.ply = 2 * (fullmove - 1) + uint(position.turn)
+    fullmove := strconv.parse_int(fullmove_clk) or_else 1
+    position.ply = 2 * (fullmove - 1) + int(position.turn)
 
     occ := occupied(&position)
     gen_attack_mask(.White, &position, occ)

@@ -19,7 +19,7 @@ uci_loop :: proc() {
 	defer bufio.scanner_destroy(&scanner)
 
 	position := starting_position()
-	defer delete(position.irreversible_history)
+	defer delete(position.history)
 
 	uci_loop:
 	for {
@@ -46,11 +46,11 @@ uci_loop :: proc() {
 			fmt.println("readyok")
 		case "setoption":
 		case "ucinewgame":
-			delete(position.irreversible_history)
+			delete(position.history)
 			position = starting_position()
 		case "position":
 			if new_position, ok := parse_position(&line); ok {
-				delete(position.irreversible_history)
+				delete(position.history)
 				position = new_position
 			} else {
 				fmt.println("Invalid position command:", full_line)	

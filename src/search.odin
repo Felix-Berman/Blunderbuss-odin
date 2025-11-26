@@ -1,5 +1,6 @@
 package blunderbuss
 
+import "core:testing"
 import "core:mem"
 import "core:fmt"
 import "core:time"
@@ -33,15 +34,16 @@ default_info :: proc(position: Position) -> (info: SearchInfo) {
 	info.max_nodes = builtin.max(int)
 
 	// perform deep copy
-	if position.irreversible_history != nil {
-		src := position.irreversible_history[:]
-		info.position.irreversible_history = make(
-			[dynamic]Irreversibles,
+	if position.history != nil {
+		src := position.history[:]
+		info.position.history = make(
+			[dynamic]HistoryData,
 			len(src),
-			cap(position.irreversible_history)
+			cap(position.history)
 		)
-		copy(info.position.irreversible_history[:], src)
+		copy(info.position.history[:], src)
 	}
+
 	return
 }
 
@@ -50,7 +52,7 @@ root_search :: proc(data: rawptr) {
 
 	info := cast(^SearchInfo)data
 	defer {
-		delete(info.position.irreversible_history)
+		delete(info.position.history)
 		free(info)
 	}
 
@@ -94,7 +96,7 @@ root_search :: proc(data: rawptr) {
 			defer delete(curr_info)
 
 			bufio.writer_write_string(&writer, curr_info)
-			if time.tick_since(info.start_time) > 5 * time.Second {
+			if time.tick_since(info.start_time) > 3 * time.Second {
 				bufio.writer_flush(&writer)
 			}
 
@@ -155,6 +157,10 @@ negamax :: proc(alpha, beta, depth, ply: int, info: ^SearchInfo) -> int {
 			info.aborted = true
 			return 0
 		}
+	}
+
+	if info.position.halfmove_clk >= 100 || threefold_repetition(info, ply) {
+		return 0
 	}
 
 	info.nodes += 1
@@ -234,4 +240,24 @@ pick_move :: proc(movelist: []Move, ply: int, info: ^SearchInfo) -> Move {
 	}
 
 	return movelist[0]
+}
+
+threefold_repetition :: proc(info: ^SearchInfo, search_ply: int) -> bool {
+	ply_to_search := info.position.ply - info.position.last_irreversible_ply
+
+	if ply_to_search < 4 {
+		return false
+	}
+
+	history_len := len(info.position.history)
+	repetition_count: int
+	for i: int = 4; i <= ply_to_search; i += 2 {
+		if info.position.history[history_len - i].hash == info.position.hash {	
+			if search_ply > 2 do return true
+			repetition_count += 1
+			if repetition_count == 2 do return true	
+		}
+	}
+
+	return false
 }

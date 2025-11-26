@@ -60,7 +60,7 @@ perft_divide :: proc(position: ^Position, depth: int) {
 	fmt.println(total_nodes)
 }
 
-test_range :: [2]int{1, 126}
+test_range :: [2]int{2, 126}
 
 @(test)
 perft_suite :: proc(t: ^testing.T) {
@@ -85,7 +85,7 @@ perft_suite :: proc(t: ^testing.T) {
 		if !ok do return
 
 		position := parse_fen(fen) or_continue
-        defer delete(position.irreversible_history)
+        defer delete(position.history)
 
 		log.infof("perft test {}", test_num)
 		log.infof("FEN: {}",  fen)

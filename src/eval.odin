@@ -6,7 +6,7 @@ piece_value :[PieceType]int = {
 	.Bishop = 350,
 	.Rook = 500,
 	.Queen = 900,
-	.King = MAX_SCORE
+	.King = 30_000
 }
 
 eval :: proc(position: ^Position) -> int {

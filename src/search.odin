@@ -8,8 +8,9 @@ import "core:os"
 import "base:intrinsics"
 import "base:builtin"
 
-MAX_SCORE :: 1_000_000_000
+MAX_SCORE :: builtin.max(int)
 MIN_SCORE :: -MAX_SCORE
+MATE_SCORE :: 1_000_000
 MAX_DEPTH :: 32
 
 SearchInfo :: struct {
@@ -76,6 +77,12 @@ root_search :: proc(data: rawptr) {
 			move := pick_move(moves[i:], ply, info)
 			make_move(&info.position, move)
 			defer unmake_move(&info.position, move)
+			
+			// useful to see formatted move in debugger
+			when ODIN_DEBUG {
+				move_str := to_string(move)
+				defer delete(move_str)
+			}
 
 			if is_in_check(us, &info.position) do continue
 
@@ -87,7 +94,7 @@ root_search :: proc(data: rawptr) {
 			defer delete(curr_info)
 
 			bufio.writer_write_string(&writer, curr_info)
-			if time.tick_since(info.start_time) > time.Second {
+			if time.tick_since(info.start_time) > 5 * time.Second {
 				bufio.writer_flush(&writer)
 			}
 
@@ -103,9 +110,15 @@ root_search :: proc(data: rawptr) {
 		bufio.writer_reset(&writer, stdout)
 
 		score_type: string
-		if builtin.abs(best_score) == MAX_SCORE {
+		if best_score > MATE_SCORE - depth {
+			ply_to_mate := MATE_SCORE - best_score
+			best_score = (ply_to_mate + 1) / 2
 			score_type = "mate"
-			best_score = info.pv_length[0]
+			found_mate = true
+		} else if best_score < -MATE_SCORE + depth {
+			ply_to_mate := MATE_SCORE + best_score
+			best_score = -ply_to_mate / 2
+			score_type = "mate"
 			found_mate = true
 		} else {
 			score_type = "cp"
@@ -152,6 +165,7 @@ negamax :: proc(alpha, beta, depth, ply: int, info: ^SearchInfo) -> int {
 	alpha := alpha
 	best_score := MIN_SCORE
 	info.pv_length[ply] = 0
+	move_count := 0
 
 	us := info.position.turn
 	moves := gen_pseudo_legal_moves(&info.position)
@@ -162,7 +176,14 @@ negamax :: proc(alpha, beta, depth, ply: int, info: ^SearchInfo) -> int {
 		make_move(&info.position, move)
 		defer unmake_move(&info.position, move)
 
+		// useful to see formatted move in debugger
+		when ODIN_DEBUG {
+			move_str := to_string(move)
+			defer delete(move_str)
+		}
+
 		if is_in_check(us, &info.position) do continue
+		move_count += 1
 
 		score := -negamax(-beta, -alpha, depth - 1, ply + 1, info)
 
@@ -180,6 +201,13 @@ negamax :: proc(alpha, beta, depth, ply: int, info: ^SearchInfo) -> int {
 		if score >= beta {
 			return best_score
 		}
+	}
+
+	if move_count == 0 {
+		if is_in_check(us, &info.position) {
+			return -MATE_SCORE + ply
+		}
+		return 0
 	}
 
 	return best_score

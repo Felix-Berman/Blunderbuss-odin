@@ -67,6 +67,10 @@ uci_loop :: proc() {
 				depth := strconv.parse_int(depth_str) or_else 0
 				perft_divide(&position, depth)
 			}
+		case "bench":
+			depth_str := strings.split_iterator(&line, " ") or_else ""
+			depth := strconv.parse_int(depth_str) or_else BENCH_DEPTH
+			bench(depth)
 		case "print":
 			display(position)
 		}
@@ -95,17 +99,17 @@ parse_position :: proc(line: ^string) -> (position: Position, ok: bool) {
 }
 
 go :: proc(line: ^string, position: ^Position) -> bool {
-	info := new(SearchInfo, runtime.default_allocator())
-	info^ = default_info(position^)
+	data := new(SearchData, runtime.default_allocator())
+	data^ = default_data(position^)
 	side_time, wtime, btime, side_inc, winc, binc, movetime: int
 	movestogo := 40
 
 	for cmd in strings.split_iterator(line, " ") {
 		switch cmd {
 		case "depth":
-			info.max_depth = get_next_int(line) or_return
+			data.max_depth = get_next_int(line) or_return
 		case "nodes":
-			info.max_nodes = get_next_int(line) or_return
+			data.max_nodes = get_next_int(line) or_return
 		case "wtime":
 			wtime = get_next_int(line) or_return
 		case "btime":
@@ -119,7 +123,7 @@ go :: proc(line: ^string, position: ^Position) -> bool {
 		case "movetime":
 			movetime = get_next_int(line) or_return
 		case "infinite":
-			info.infinite = true
+			data.infinite = true
 		}
 	}
 
@@ -130,18 +134,16 @@ go :: proc(line: ^string, position: ^Position) -> bool {
 	}
 
 	if movetime != 0 {
-		info.allowed_time = time.Duration(movetime) * time.Millisecond
+		data.allowed_time = time.Duration(movetime) * time.Millisecond
+		data.infinite = false
 	} else if side_time != 0 {
-		info.allowed_time = time.Duration(side_time/movestogo + side_inc/2)
-		info.allowed_time *= time.Millisecond
-	} else {
-		info.infinite = true
+		data.allowed_time = time.Duration(side_time/movestogo + side_inc/2)
+		data.allowed_time *= time.Millisecond
+		data.infinite = false
 	}
 
-	info.start_time = time.tick_now()
-
 	stop_flag = false
-	thread.run_with_data(info, root_search, priority = .High)
+	thread.run_with_data(data, search_thread, priority = .High)
 
 	return true
 }

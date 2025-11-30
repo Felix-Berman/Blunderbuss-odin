@@ -145,6 +145,9 @@ make_move :: proc(position: ^Position, move: Move) {
     position.turn = them
 	position.hash ~= ZOBRIST_RANDS[TURN_OFFSET]
     position.ply += 1
+	if us == .Black {
+		position.fullmove_clk += 1
+	}
 
 	when ODIN_DEBUG {
 		hash := zobrist_hash(position^)
@@ -214,6 +217,9 @@ unmake_move :: proc(position: ^Position, move: Move) {
 
     position.turn = us
     position.ply -= 1
+	if us == .Black {
+		position.fullmove_clk -= 1
+	}
 }
 
 make_move_str :: proc(position: ^Position, str: string) -> (ok: bool) {

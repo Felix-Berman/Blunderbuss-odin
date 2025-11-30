@@ -35,6 +35,7 @@ Position :: struct {
     castling: bit_set[Castling],
     ep_sq: int,
     halfmove_clk: uint,
+	fullmove_clk: uint,
     ply: int,
 	hash: u64,
 	last_irreversible_ply: int,
@@ -66,7 +67,7 @@ starting_position :: proc() -> (position: Position) {
 
     position.occupancy = [Colour]u64{.White = 0xffff, .Black = 0xffff << (6*8)}
     position.turn = .White
-    position.castling = ~ {}  // inverse of empty set
+    position.castling = ~{}  // inverse of empty set
     position.ep_sq = 64
     position.halfmove_clk = 0
     position.ply = 0
@@ -175,8 +176,8 @@ parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {
 	fullmove_clk := strings.split_iterator(&fen, " ") or_else "1"
 
     position.halfmove_clk = strconv.parse_uint(halfmove_clk) or_else 0
-    fullmove := strconv.parse_int(fullmove_clk) or_else 1
-    position.ply = 2 * (fullmove - 1) + int(position.turn)
+    fullmove := strconv.parse_uint(fullmove_clk) or_else 1
+	position.fullmove_clk = fullmove
 
     occ := occupied(&position)
     gen_attack_mask(.White, &position, occ)

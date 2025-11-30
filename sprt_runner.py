@@ -114,7 +114,7 @@ def run_sprt(base_bin, new_bin, base_branch, feature_branch):
         "-recover", # Restart engine on crash
         "-pgnout", f"file={pgn_filename}", "notation=lan", "nodes=true",
         "-config", f"outname={PGN_OUTPUT_DIR}/config.json",
-        "log", f"file={log_filename}", "engine=true",
+        "-log", f"file={log_filename}",
     ]
 
     cmd_str = " ".join(cmd)

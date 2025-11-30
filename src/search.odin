@@ -1,6 +1,5 @@
 package blunderbuss
 
-import "core:testing"
 import "core:mem"
 import "core:fmt"
 import "core:time"
@@ -12,11 +11,12 @@ import "base:builtin"
 MAX_SCORE :: builtin.max(int)
 MIN_SCORE :: -MAX_SCORE
 MATE_SCORE :: 1_000_000
-MAX_DEPTH :: 32
+MAX_DEPTH :: 64
 
 SearchData :: struct {
 	position: Position,
 	max_depth: int,
+	seldepth: int,
 	nodes: int,
 	max_nodes: int,
 	mate: bool,
@@ -77,10 +77,13 @@ root_search :: proc(data: ^SearchData) -> int {
 		if found_mate do break
 		best_score := MIN_SCORE
 
+		move_scores := score_moves(moves[:], 0, data)
+		defer delete(move_scores)
+
 		data.pv_length = {}
 		move_count := 0
 		for i in 0..<len(moves) {
-			move := pick_move(moves[i:], ply, data)
+			move := pick_move(moves[i:], move_scores[i:])
 			make_move(&data.position, move)
 			defer unmake_move(&data.position, move)
 			
@@ -135,8 +138,8 @@ root_search :: proc(data: ^SearchData) -> int {
 		nps := f64(data.nodes) / time.duration_seconds(elapsed)
 		len := data.pv_length[0]
 		pv_str := to_string(data.pv_table[0][:len])
-		fmt.printfln("info depth %d nodes %d time %d nps %d score %s %d pv %s",
-			depth, data.nodes, elapsed_ms, int(nps), score_type, best_score, pv_str)
+		fmt.printfln("info depth %d seldepth %d nodes %d time %d nps %d score %s %d pv %s",
+			depth, data.seldepth, data.nodes, elapsed_ms, int(nps), score_type, best_score, pv_str)
 		delete(pv_str)
 	}
 
@@ -181,10 +184,14 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 
 	us := data.position.turn
 	moves := gen_pseudo_legal_moves(&data.position)
-	defer delete(moves)
+	move_scores := score_moves(moves[:], ply, data)
+	defer {
+		delete(moves)
+		delete(move_scores)
+	}
 
 	for i in 0..<len(moves) {
-		move := pick_move(moves[i:], ply, data)
+		move := pick_move(moves[i:], move_scores[i:])
 		make_move(&data.position, move)
 		defer unmake_move(&data.position, move)
 
@@ -200,6 +207,10 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		score := -negamax(-beta, -alpha, depth - 1, ply + 1, data)
 
 		if data.aborted do return 0
+
+		if score >= beta {
+			return score
+		}
 		
 		if score > best_score {
 			best_score = score
@@ -208,10 +219,6 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 				alpha = score
 				update_pv(ply, move, data)
 			}
-		}
-
-		if score >= beta {
-			return best_score
 		}
 	}
 
@@ -235,14 +242,39 @@ update_pv :: proc(ply: int, move: Move, info: ^SearchData) {
 	)
 }
 
-pick_move :: proc(movelist: []Move, ply: int, info: ^SearchData) -> Move {
+score_moves :: proc(movelist: []Move, ply: int, data: ^SearchData) -> (scores: [dynamic]int) {
+	resize(&scores, len(movelist))
 	for move, i in movelist {
 		if move == NULL_MOVE do break
-		if move == info.pv_table[0][ply] {
-			move_temp := movelist[0]
-			movelist[0] = move
-			movelist[i] = move_temp
+		if move == data.pv_table[0][ply] {
+			scores[i] = 100_000
+			continue
 		}
+
+		flags := get_flags(move)
+		if .Capture in flags {
+			moved := piece_on(&data.position, move.from) or_continue
+			captured := piece_on(&data.position, move.to) or_continue
+			scores[i] += 10_000 + piece_value[captured.type] - piece_value[moved.type]
+		}
+	}
+
+	return
+}
+
+pick_move :: proc(movelist: []Move, scores: []int) -> Move {
+	best_score, best_i: int
+
+	for score, i in scores {
+		if score > best_score {
+			best_score, best_i = score, i
+		}
+	}
+
+	if best_i != 0 {
+		move_temp := movelist[0]
+		movelist[0] = movelist[best_i]
+		movelist[best_i] = move_temp
 	}
 
 	return movelist[0]

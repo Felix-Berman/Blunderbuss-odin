@@ -137,9 +137,8 @@ root_search :: proc(data: ^SearchData) -> int {
 		nps := f64(data.nodes) / time.duration_seconds(elapsed)
 		len := data.pv_length[0]
 		pv_str := to_string(data.pv_table[0][:len], context.temp_allocator)
-		fmt.printfln("info depth %d nodes %d time %d nps %d score %s %d pv %s",
-			depth, data.nodes, elapsed_ms, int(nps), score_type, best_score, pv_str)
-		// delete(pv_str)
+		fmt.printfln("info depth %d seldepth %d nodes %d time %d nps %d score %s %d pv %s",
+			depth, data.seldepth, data.nodes, elapsed_ms, int(nps), score_type, best_score, pv_str)
 	}
 
 	move_str := to_string(best_move)
@@ -173,7 +172,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 
 	data.nodes += 1
 	if depth == 0 {
-		return eval(&data.position)
+		return q_search(alpha, beta, ply, data)
 	}
 
 	alpha := alpha
@@ -226,6 +225,88 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 			return -MATE_SCORE + ply
 		}
 		return 0
+	}
+
+	return best_score
+}
+
+q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
+	if data.nodes % 2048 == 0 {
+		if !data.infinite && time.tick_since(data.start_time) >= data.allowed_time {
+			data.aborted = true
+			return 0
+		}
+		if intrinsics.atomic_load(&stop_flag) {
+			data.aborted = true
+			return 0
+		}
+		if data.nodes >= data.max_nodes {
+			data.aborted = true
+			return 0
+		}
+	}
+
+	if ply >= MAX_DEPTH {
+		return eval(&data.position)
+	}
+
+	data.nodes += 1
+	alpha := alpha
+	best_score := eval(&data.position)
+	data.pv_length[ply] = 0
+	move_count := 0
+	if ply > data.seldepth {
+		data.seldepth = ply
+	}
+
+	if best_score >= beta {
+		return best_score
+	}
+	if best_score > alpha {
+		alpha = best_score
+	}
+
+	us := data.position.turn
+	moves := gen_pseudo_legal_moves(&data.position)
+	move_scores := score_moves(moves[:], ply, data)
+	defer {
+		delete(moves)
+		delete(move_scores)
+	}
+
+	for i in 0..<len(moves) {
+		move := pick_move(moves[i:], move_scores[i:])
+		flags := get_flags(move)
+		if .Capture not_in flags do continue
+
+		make_move(&data.position, move)
+		defer unmake_move(&data.position, move)
+
+		// useful to see formatted move in debugger
+		when ODIN_DEBUG {
+			move_str := to_string(move)
+			defer delete(move_str)
+		}
+
+		if is_in_check(us, &data.position) do continue
+		move_count += 1
+
+		score := -q_search(-beta, -alpha, ply + 1, data)
+
+		if data.aborted do return 0
+		
+		if score >= beta {
+			return score
+		}
+
+		if score > best_score {
+			best_score = score
+
+			if score > alpha {
+				alpha = score
+				update_pv(ply, move, data)
+			}
+		}
 	}
 
 	return best_score

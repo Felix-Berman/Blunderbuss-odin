@@ -13,7 +13,7 @@ ARTIFACTS_DIR = "versions"
 PGN_OUTPUT_DIR = "sprt_log"
 
 TIME_CONTROL = "10+0.1"
-CONCURRENCY = 3
+CONCURRENCY = 6
 ROUNDS = 2000
 
 SPRT_CFG = "elo0=0 elo1=5 alpha=0.05 beta=0.05"
@@ -91,6 +91,10 @@ def run_sprt(base_bin, new_bin, base_branch, feature_branch):
             PGN_OUTPUT_DIR,
             f"sprt_{base_branch}_vs_{feature_branch}_{timestamp}.pgn"
     )
+    log_filename = os.path.join(
+            PGN_OUTPUT_DIR,
+            f"sprt_{base_branch}_vs_{feature_branch}_{timestamp}.txt"
+    )
 
     # Construct command
     # Fastchess is largely compatible with cutechess syntax but robust
@@ -110,6 +114,7 @@ def run_sprt(base_bin, new_bin, base_branch, feature_branch):
         "-recover", # Restart engine on crash
         "-pgnout", f"file={pgn_filename}", "notation=lan", "nodes=true",
         "-config", f"outname={PGN_OUTPUT_DIR}/config.json",
+        "-log", f"file={log_filename}",
     ]
 
     cmd_str = " ".join(cmd)

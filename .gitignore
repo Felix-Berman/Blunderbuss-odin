@@ -1,3 +1,7 @@
 *.exe
 *.pdb
 *.rdi
+*.pgn
+*.obj
+versions/
+sprt_log/

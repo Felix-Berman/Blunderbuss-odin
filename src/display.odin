@@ -123,6 +123,7 @@ to_string_move :: proc(move: Move, allocator := context.allocator) -> string {
 
 to_string_movelist :: proc(list: []Move, allocator := context.allocator) -> string {
 	builder := strings.builder_make(allocator)
+
 	for move in list {
 		if move == NULL_MOVE do break
 		fmt.sbprintf(&builder, "%s ", to_string(move, allocator))

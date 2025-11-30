@@ -21,6 +21,7 @@ bench :: proc(depth: int = BENCH_DEPTH) {
 		data := default_data(position)
 		data.max_depth = depth
 		total_nodes += root_search(&data)
+		delete(data.position.history)
 	}
 
 	total_time := time.tick_since(start_time)	

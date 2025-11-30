@@ -96,11 +96,9 @@ root_search :: proc(data: ^SearchData) -> int {
 			if is_in_check(us, &data.position) do continue
 
 			move_count += 1
-			currmove := to_string(move)
-			curr_info := fmt.aprintfln("info depth %d currmove %s currmovenumber %d",
+			currmove := to_string(move, context.temp_allocator)
+			curr_info := fmt.tprintfln("info depth %d currmove %s currmovenumber %d",
 				depth, currmove, move_count)
-			defer delete(currmove)
-			defer delete(curr_info)
 
 			bufio.writer_write_string(&writer, curr_info)
 			if time.tick_since(data.start_time) > 3 * time.Second {
@@ -117,6 +115,7 @@ root_search :: proc(data: ^SearchData) -> int {
 			}
 		}
 		bufio.writer_reset(&writer, stdout)
+		free_all(context.temp_allocator)
 
 		score_type: string
 		if best_score > MATE_SCORE - depth {
@@ -137,10 +136,10 @@ root_search :: proc(data: ^SearchData) -> int {
 		elapsed_ms := int(time.duration_milliseconds(elapsed))
 		nps := f64(data.nodes) / time.duration_seconds(elapsed)
 		len := data.pv_length[0]
-		pv_str := to_string(data.pv_table[0][:len])
-		fmt.printfln("info depth %d seldepth %d nodes %d time %d nps %d score %s %d pv %s",
-			depth, data.seldepth, data.nodes, elapsed_ms, int(nps), score_type, best_score, pv_str)
-		delete(pv_str)
+		pv_str := to_string(data.pv_table[0][:len], context.temp_allocator)
+		fmt.printfln("info depth %d nodes %d time %d nps %d score %s %d pv %s",
+			depth, data.nodes, elapsed_ms, int(nps), score_type, best_score, pv_str)
+		// delete(pv_str)
 	}
 
 	move_str := to_string(best_move)

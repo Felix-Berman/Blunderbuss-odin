@@ -166,18 +166,19 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		}
 	}
 
+	data.pv_length[ply] = 0
+	data.nodes += 1
+
 	if data.position.halfmove_clk >= 100 || threefold_repetition(data, ply) {
 		return 0
 	}
 
-	data.nodes += 1
 	if depth == 0 {
 		return q_search(alpha, beta, ply, data)
 	}
 
 	alpha := alpha
 	best_score := MIN_SCORE
-	data.pv_length[ply] = 0
 	move_count := 0
 
 	us := data.position.turn
@@ -246,14 +247,15 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 		}
 	}
 
+	data.nodes += 1
+	data.pv_length[ply] = 0
+
 	if ply >= MAX_DEPTH {
 		return eval(&data.position)
 	}
 
-	data.nodes += 1
 	alpha := alpha
 	best_score := eval(&data.position)
-	data.pv_length[ply] = 0
 	move_count := 0
 	if ply > data.seldepth {
 		data.seldepth = ply
@@ -312,13 +314,19 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 	return best_score
 }
 
-update_pv :: proc(ply: int, move: Move, info: ^SearchData) {
-	info.pv_table[ply][ply] = move
-	info.pv_length[ply] = info.pv_length[ply + 1] + 1
+update_pv :: proc(ply: int, move: Move, data: ^SearchData) {
+	data.pv_table[ply][ply] = move
+
+	if ply >= 63 {
+		data.pv_length[ply] = 0
+		return
+	}
+
+	data.pv_length[ply] = data.pv_length[ply + 1] + 1
 	mem.copy_non_overlapping(
-		&info.pv_table[ply][ply + 1],
-		&info.pv_table[ply + 1][ply + 1],
-		info.pv_length[ply + 1] * size_of(Move)
+		&data.pv_table[ply][ply + 1],
+		&data.pv_table[ply + 1][ply + 1],
+		data.pv_length[ply + 1] * size_of(Move)
 	)
 }
 

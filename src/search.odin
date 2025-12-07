@@ -13,6 +13,8 @@ MIN_SCORE :: -MAX_SCORE
 MATE_SCORE :: 1_000_000
 MAX_DEPTH :: 64
 
+DELTA_MARGIN :: 200
+
 SearchData :: struct {
 	position: Position,
 	max_depth: int,
@@ -281,14 +283,27 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 		flags := get_flags(move)
 		if .Capture not_in flags do continue
 
-		make_move(&data.position, move)
-		defer unmake_move(&data.position, move)
-
-		// useful to see formatted move in debugger
 		when ODIN_DEBUG {
+			// useful to see formatted move in debugger
 			move_str := to_string(move)
 			defer delete(move_str)
+
+			// validate static exchange accuracy
+			recursive_see_val := recursive_see_root(&data.position, move)
+			see_val := see(&data.position, move)
+			if see_val != recursive_see_val {
+				display(data.position)
+				fmt.println(to_string(move, context.temp_allocator))
+				fmt.println(see_val, "!=", recursive_see_val)
+				panic("static exchange evaluation error")
+			}
 		}
+
+		// static exchange evaluation (don't consider trades losing material)
+		if see(&data.position, move) < 0 do continue
+
+		make_move(&data.position, move)
+		defer unmake_move(&data.position, move)
 
 		if is_in_check(us, &data.position) do continue
 		move_count += 1
@@ -386,4 +401,156 @@ threefold_repetition :: proc(info: ^SearchData, search_ply: int) -> bool {
 	}
 
 	return false
+}
+
+see :: proc(position: ^Position, move: Move) -> int {
+	to := int(move.to)
+	to_bb := to_bitboard(to)
+	victim, ok := piece_on(position, to)
+
+	if !ok { // non capture
+		return 0
+	}
+
+	us := position.turn
+	occ := occupied(position)
+
+	gain: [32]int
+	depth := 0
+
+	victim_type := victim.type
+	gain[0] = piece_value[victim_type]
+
+	attacker: Piece
+	attackers := attackers_to(position, to)
+	attacker, ok = piece_on(position, move.from)
+	assert(ok, "Attempt to move from empty square")
+	assert(attackers[us] & to_bitboard(move.from) != 0, 
+		"Initial attacker not included in see attack set")
+
+	victim_type = attacker.type
+	occ &~= to_bitboard(move.from)
+	us = toggle(us)
+
+	for depth < 32 {
+		// calculate gain
+		depth += 1
+		gain[depth] = piece_value[victim_type] - gain[depth - 1]
+
+		// include revealed x-ray attacks
+		bishop_attacks := bishop_moves(to, occ)
+		rook_attacks := rook_moves(to, occ)
+		attackers[.White] |= bishop_attacks & position.pieces[.White][.Bishop]
+		attackers[.Black] |= bishop_attacks & position.pieces[.Black][.Bishop]
+		attackers[.White] |= bishop_attacks & position.pieces[.White][.Queen]
+		attackers[.Black] |= bishop_attacks & position.pieces[.Black][.Queen]
+		attackers[.White] |= rook_attacks & position.pieces[.White][.Rook]
+		attackers[.Black] |= rook_attacks & position.pieces[.Black][.Rook]
+		attackers[.White] |= rook_attacks & position.pieces[.White][.Queen]
+		attackers[.Black] |= rook_attacks & position.pieces[.Black][.Queen]
+
+		// find least valuable attacker
+		att := attackers[us] & occ
+		if att == 0 {
+			break
+		}
+
+		if victim_type == .King {
+			gain[depth - 1] = -gain[depth]
+			break
+		}
+
+		next_attacker: PieceType
+		next_sq: int
+
+		no_attackers := true
+		for piece in PieceType {
+			if bb := att & position.pieces[us][piece]; bb != 0 {
+				next_attacker = piece
+				next_sq = lsb(bb)
+				no_attackers = false
+				break
+			}
+		}
+
+		if no_attackers {
+			display(position^)
+			display(att)
+			fmt.println(to_string(move, context.temp_allocator))
+			panic("Misalignment between piece bbs and att bb in see")
+		}
+
+		victim_type = next_attacker
+		occ &~= to_bitboard(next_sq)
+		us = toggle(us)
+	}
+	
+	// walk back sequence of captures
+	for d := depth - 1; d > 0; d -= 1 {
+		// side at depth d will only make capture if it improves current value
+		// gained
+		if gain[d - 1] > -gain[d] {
+			gain[d - 1] = -gain[d]
+		}
+	}
+
+	return gain[0]
+}
+
+recursive_see :: proc(position: ^Position, to: int) -> (value: int) {
+	us := position.turn
+	victim, ok := piece_on(position, to)
+	assert(ok, "No victim in recursive see")
+	victim_val := piece_value[victim.type]
+
+	attackers := attackers_to(position, to)
+	next_attacker: PieceType
+	from: int
+
+	no_attackers := true
+	for piece in PieceType {
+		if bb := attackers[us] & position.pieces[us][piece]; bb != 0 {
+			next_attacker = piece
+			from = lsb(bb)
+			no_attackers = false
+			break
+		}
+	}
+
+	if no_attackers {
+		return 0
+	}
+
+	if victim.type == .King {
+		return victim_val
+	}
+
+	move := build_move(from, to, {.Capture})
+	make_move(position, move)
+	value += builtin.max(0, victim_val - recursive_see(position, to))
+	unmake_move(position, move)
+
+	return
+}
+
+recursive_see_root :: proc(position: ^Position, move: Move) -> (value: int) {
+	move := move
+	to := int(move.to)
+	victim, ok := piece_on(position, to)
+	assert(ok, "No victim in recursive see")
+
+	victim_val := piece_value[victim.type]
+
+	if victim.type == .King {
+		return victim_val
+	}
+
+	// strip promotion information from flags
+	set_flags(&move, {.Capture})	
+
+	make_move(position, move)
+	value += victim_val - recursive_see(position, to)
+	unmake_move(position, move)
+
+	return
 }

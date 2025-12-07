@@ -16,7 +16,6 @@ TIME_CONTROL = "10+0.1"
 CONCURRENCY = 6
 ROUNDS = 2000
 
-SPRT_CFG = "elo0=0 elo1=5 alpha=0.05 beta=0.05"
 
 def log(msg):
     print(f"\033[96m[SPRT MANAGER] {msg}\033[0m")
@@ -32,7 +31,7 @@ def run_command(cmd, cwd=None, shell=True):
     except subprocess.CalledProcessError as e:
         error(f"Command failed: {cmd}\n{e}")
 
-def get_current_commit_short_hash(repo_path):
+def get_commit_short_hash(repo_path):
     """Gets the short commit hash (e.g., a1b2c3d) for the current HEAD."""
     result = subprocess.run("git rev-parse --short HEAD", cwd=repo_path, shell=True, capture_output=True, text=True)
     if result.returncode != 0:
@@ -44,11 +43,9 @@ def git_checkout(branch):
     log(f"Checking out branch: {branch}...")
     run_command(f"git checkout {branch}", cwd=REPO_PATH)
 
-def build_engine(branch_name):
+def build_engine(branch_name, commit_hash):
     """Builds the engine and copies the binary to artifacts."""
     log(f"Building {branch_name}...")
-
-    commit_hash = get_current_commit_short_hash(REPO_PATH)
 
     base_name = os.path.basename(BUILT_BIN_PATH)
     name, ext = os.path.splitext(base_name)
@@ -80,7 +77,7 @@ def get_current_branch():
     result = subprocess.run("git branch --show-current", cwd=REPO_PATH, shell=True, capture_output=True, text=True)
     return result.stdout.strip()
 
-def run_sprt(base_bin, new_bin, base_branch, feature_branch):
+def run_sprt(base_bin, new_bin, base_name, feature_name, H0 = 0, H1 = 5):
     """Constructs and executes the fastchess command."""
     log("Starting SPRT Test with Fastchess...")
 
@@ -89,22 +86,22 @@ def run_sprt(base_bin, new_bin, base_branch, feature_branch):
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     pgn_filename = os.path.join(
             PGN_OUTPUT_DIR,
-            f"sprt_{base_branch}_vs_{feature_branch}_{timestamp}.pgn"
+            f"sprt_{base_name}_vs_{feature_name}_{timestamp}.pgn"
     )
     log_filename = os.path.join(
             PGN_OUTPUT_DIR,
-            f"sprt_{base_branch}_vs_{feature_branch}_{timestamp}.log"
+            f"sprt_{base_name}_vs_{feature_name}_{timestamp}.log"
     )
 
     # Construct command
     # Fastchess is largely compatible with cutechess syntax but robust
     cmd = [
         FASTCHESS_PATH,
-        "-engine", f"name={feature_branch}", f"cmd={new_bin}",
-        "-engine", f"name={base_branch}", f"cmd={base_bin}",
+        "-engine", f"name={feature_name}", f"cmd={new_bin}",
+        "-engine", f"name={base_name}", f"cmd={base_bin}",
         "-each", f"tc={TIME_CONTROL}",
         # f"option.Hash={HASH_SIZE}",
-        "-sprt", SPRT_CFG,
+        "-sprt", f"elo0={H0} elo1={H1} alpha=0.05 beta=0.05",
         "-rounds", str(ROUNDS),
         "-games", "2", # Play pairs (white/black)
         "-concurrency", str(CONCURRENCY),
@@ -126,11 +123,20 @@ def run_sprt(base_bin, new_bin, base_branch, feature_branch):
 
 def main():
     if len(sys.argv) < 3:
-        print("Usage: python sprt_runner.py <main_branch> <feature_branch>")
+        print("Usage: python sprt_runner.py <main_branch> <feature_branch> [H0] [H1]")
         sys.exit(1)
 
     base_branch = sys.argv[1]
     feature_branch = sys.argv[2]
+
+    if len(sys.argv) > 3:
+        null_hypothesis = int(sys.argv[3])
+    else:
+        null_hypothesis = 0
+    if len(sys.argv) > 4:
+        alt_hypothesis = int(sys.argv[4])
+    else:
+        alt_hypothesis = 5
 
     original_branch = get_current_branch()
 
@@ -139,11 +145,13 @@ def main():
 
         # 1. Build Base
         git_checkout(base_branch)
-        base_bin = build_engine(base_branch)
+        base_hash = get_commit_short_hash(REPO_PATH)
+        base_bin = build_engine(base_branch, base_hash)
 
         # 2. Build Feature
         git_checkout(feature_branch)
-        new_bin = build_engine(feature_branch)
+        feature_hash = get_commit_short_hash(REPO_PATH)
+        new_bin = build_engine(feature_branch, feature_hash)
 
         # 3. Restore original branch (politeness)
         git_checkout(original_branch)
@@ -151,11 +159,12 @@ def main():
         # 4. Run Match
         # We use absolute paths for fastchess to be safe
         run_sprt(os.path.abspath(base_bin), os.path.abspath(new_bin),
-                 base_branch, feature_branch)
+                 f"{base_branch}_({base_hash})",
+                 f"{feature_branch}_({feature_hash})",
+                 null_hypothesis, alt_hypothesis)
 
     except KeyboardInterrupt:
         log("Interrupted by user. Cleaning up...")
-        # Optional: Switch back to original branch on abort
         git_checkout(original_branch)
         sys.exit(0)
     except Exception as e:

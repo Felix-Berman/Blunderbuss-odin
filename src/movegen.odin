@@ -306,6 +306,27 @@ gen_attack_mask :: proc($side: Colour, position: ^Position, occ: u64) -> (atk: u
     return
 }
 
+attackers_to :: proc(position: ^Position, sq: int) -> (attackers: [Colour]u64) {
+	bb := to_bitboard(sq)
+	occ := occupied(position)
+	pieces := position.pieces
+	
+	attackers[.White] = (bb >> 9 | bb >> 7) & pieces[.White][.Pawn]
+	attackers[.Black] = (bb << 9 | bb << 7) & pieces[.Black][.Pawn]
+	
+	for side in Colour {
+		bishop_like := pieces[side][.Bishop] | pieces[side][.Queen]
+		rook_like := pieces[side][.Rook] | pieces[side][.Queen]
+		
+		attackers[side] |= knight_moves(bb) & pieces[side][.Knight]
+		attackers[side] |= bishop_moves(sq, occ) & bishop_like
+		attackers[side] |= rook_moves(sq, occ) & rook_like
+		attackers[side] |= king_moves(bb) & pieces[side][.King]
+	}
+	
+	return
+}
+
 // calculate sliding attacks using hyperbola quintessence: 
 // https://www.chessprogramming.org/Hyperbola_Quintessence
 

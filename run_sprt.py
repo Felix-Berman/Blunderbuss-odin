@@ -39,7 +39,7 @@ def main():
     base_worktree = CWD / "../blunderbuss_temp_base"
     run_command(f'git worktree add {base_worktree} {args.base}')
     base_hash = run_command(f'git rev-parse --short {args.base}',
-                            cwd=base_worktree)
+                            cwd=base_worktree, shell=False)
 
     base_name = f'{args.base}_{base_hash}'
     log(f'Building {base_name} from {base_worktree}')
@@ -50,6 +50,8 @@ def main():
 
     pgn_file = LOG_DIR / f"{args.test_name}_{timestamp}.pgn"
     log_file = LOG_DIR / f"{args.test_name}_{timestamp}.log"
+
+    base_name = f'{args.base}({base_hash})'
 
     fastchess_cmd = [
         FASTCHESS_CMD,

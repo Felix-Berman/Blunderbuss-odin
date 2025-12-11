@@ -28,6 +28,7 @@ SearchData :: struct {
 	allowed_time: time.Duration,
 	pv_table: [MAX_DEPTH][MAX_DEPTH]Move,
 	pv_length: [MAX_DEPTH]int,
+	killer_moves: [MAX_DEPTH][2]Move,
 }
 
 default_data :: proc(position: Position) -> (data: SearchData) {
@@ -246,6 +247,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		if data.aborted do return 0
 
 		if eval >= beta {
+			store_killer(move, ply, data)
 			ttable_insert(t_table, TTableEntry{
 				data.position.hash,
 				depth,
@@ -399,6 +401,12 @@ update_pv :: proc(ply: int, move: Move, data: ^SearchData) {
 	)
 }
 
+// score moves in order of:
+//	TT move
+//	positive material captures
+//	killer moves
+//	negative material captures
+//	all other moves
 score_moves :: proc(movelist: []Move, ply: int, best_move: Move, data: ^SearchData) -> (scores: [dynamic]int) {
 	resize(&scores, len(movelist))
 	for move, i in movelist {
@@ -413,6 +421,12 @@ score_moves :: proc(movelist: []Move, ply: int, best_move: Move, data: ^SearchDa
 			moved := piece_on(&data.position, move.from) or_continue
 			captured := piece_on(&data.position, move.to) or_continue
 			scores[i] += 10_000 + piece_value[captured.type] - piece_value[moved.type]
+		} else {
+			for killer in data.killer_moves[ply] {
+				if move == killer {
+					scores[i] += 9_900
+				}
+			}
 		}
 	}
 
@@ -607,4 +621,11 @@ recursive_see_root :: proc(position: ^Position, move: Move) -> (value: int) {
 	unmake_move(position, move)
 
 	return
+}
+
+store_killer :: proc(move: Move, ply: int, data: ^SearchData) {
+	if data.killer_moves[ply][0] != move {
+		data.killer_moves[ply][1] = data.killer_moves[ply][0]
+		data.killer_moves[ply][0] = move
+	}
 }

@@ -21,6 +21,9 @@ uci_loop :: proc() {
 	position := starting_position()
 	defer delete(position.history)
 
+	t_table = make_ttable()
+	defer delete(t_table)
+
 	uci_loop:
 	for {
 		defer free_all(context.temp_allocator)

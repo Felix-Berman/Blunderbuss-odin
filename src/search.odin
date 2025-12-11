@@ -8,9 +8,9 @@ import "core:os"
 import "base:intrinsics"
 import "base:builtin"
 
-MAX_SCORE :: builtin.max(int)
-MIN_SCORE :: -MAX_SCORE
-MATE_SCORE :: 1_000_000
+MAX_EVAL :: builtin.max(int)
+MIN_EVAL :: -MAX_EVAL
+MATE_EVAL :: 1_000_000
 MAX_DEPTH :: 64
 
 DELTA_MARGIN :: 200
@@ -73,13 +73,20 @@ root_search :: proc(data: ^SearchData) -> int {
 	
 	found_mate: bool
 	best_move: Move
+
+	zob_hash := data.position.hash
+	tt_entry := probe_ttable(t_table, zob_hash)
+	if tt_entry.hash == zob_hash {
+		best_move = tt_entry.best_move
+	}
+
 	ply := 0
 	iterative_deepening:
 	for depth in 1..=data.max_depth {
 		if found_mate do break
-		best_score := MIN_SCORE
+		best_eval := MIN_EVAL
 
-		move_scores := score_moves(moves[:], 0, data)
+		move_scores := score_moves(moves[:], 0, best_move, data)
 		defer delete(move_scores)
 
 		data.pv_length = {}
@@ -107,31 +114,31 @@ root_search :: proc(data: ^SearchData) -> int {
 				bufio.writer_flush(&writer)
 			}
 
-			score := -negamax(MIN_SCORE, MAX_SCORE, depth - 1, ply + 1, data)
+			eval := -negamax(MIN_EVAL, MAX_EVAL, depth - 1, ply + 1, data)
 
 			if data.aborted do break iterative_deepening
 
-			if score > best_score {
+			if eval > best_eval {
 				update_pv(ply, move, data)
-				best_move, best_score = move, score
+				best_move, best_eval = move, eval
 			}
 		}
 		bufio.writer_reset(&writer, stdout)
 		free_all(context.temp_allocator)
 
-		score_type: string
-		if best_score > MATE_SCORE - depth {
-			ply_to_mate := MATE_SCORE - best_score
-			best_score = (ply_to_mate + 1) / 2
-			score_type = "mate"
+		eval_type: string
+		if best_eval > MATE_EVAL - depth {
+			ply_to_mate := MATE_EVAL - best_eval
+			best_eval = (ply_to_mate + 1) / 2
+			eval_type = "mate"
 			found_mate = true
-		} else if best_score < -MATE_SCORE + depth {
-			ply_to_mate := MATE_SCORE + best_score
-			best_score = -ply_to_mate / 2
-			score_type = "mate"
+		} else if best_eval < -MATE_EVAL + depth {
+			ply_to_mate := MATE_EVAL + best_eval
+			best_eval = -ply_to_mate / 2
+			eval_type = "mate"
 			found_mate = true
 		} else {
-			score_type = "cp"
+			eval_type = "cp"
 		}
 
 		elapsed := time.tick_since(data.start_time)
@@ -140,7 +147,7 @@ root_search :: proc(data: ^SearchData) -> int {
 		len := data.pv_length[0]
 		pv_str := to_string(data.pv_table[0][:len], context.temp_allocator)
 		fmt.printfln("info depth %d seldepth %d nodes %d time %d nps %d score %s %d pv %s",
-			depth, data.seldepth, data.nodes, elapsed_ms, int(nps), score_type, best_score, pv_str)
+			depth, data.seldepth, data.nodes, elapsed_ms, int(nps), eval_type, best_eval, pv_str)
 	}
 
 	move_str := to_string(best_move)
@@ -180,17 +187,46 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 	}
 
 	alpha := alpha
-	best_score := MIN_SCORE
-	move_count := 0
+	beta := beta
+	best_eval := MIN_EVAL
+	best_move := NULL_MOVE
+	eval_type := EvalType.UpperBound
+
+	zob_hash := data.position.hash
+	tt_entry := probe_ttable(t_table, zob_hash)
+	if tt_entry.hash == zob_hash {
+		best_move = tt_entry.best_move
+
+		if tt_entry.depth >= depth {
+			// todo: re-evaluate distance to mate on mate scores
+			tt_eval := tt_entry.eval
+
+			switch tt_entry.eval_type {
+			case .Exact:
+				return tt_eval
+			case .LowerBound:
+				// if tt_eval >= beta {
+				// 	return tt_eval
+				// }
+				// alpha = builtin.max(alpha, tt_eval)
+			case .UpperBound:
+				// if tt_eval <= alpha {
+				// 	return tt_eval
+				// }
+				// beta = builtin.min(beta, tt_eval)
+			}
+		}
+	}
 
 	us := data.position.turn
 	moves := gen_pseudo_legal_moves(&data.position)
-	move_scores := score_moves(moves[:], ply, data)
+	move_scores := score_moves(moves[:], ply, best_move, data)
 	defer {
 		delete(moves)
 		delete(move_scores)
 	}
 
+	move_count := 0
 	for i in 0..<len(moves) {
 		move := pick_move(moves[i:], move_scores[i:])
 		make_move(&data.position, move)
@@ -205,32 +241,49 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		if is_in_check(us, &data.position) do continue
 		move_count += 1
 
-		score := -negamax(-beta, -alpha, depth - 1, ply + 1, data)
+		eval := -negamax(-beta, -alpha, depth - 1, ply + 1, data)
 
 		if data.aborted do return 0
 
-		if score >= beta {
-			return score
+		if eval >= beta {
+			ttable_insert(t_table, TTableEntry{
+				data.position.hash,
+				depth,
+				eval,
+				.LowerBound,
+				move,
+			})
+			return eval
 		}
 		
-		if score > best_score {
-			best_score = score
+		if eval > best_eval {
+			best_eval = eval
+			best_move = move
 
-			if score > alpha {
-				alpha = score
+			if eval > alpha {
+				alpha = eval
 				update_pv(ply, move, data)
+				eval_type = .Exact
 			}
 		}
 	}
 
 	if move_count == 0 {
 		if is_in_check(us, &data.position) {
-			return -MATE_SCORE + ply
+			return -MATE_EVAL + ply
 		}
 		return 0
 	}
 
-	return best_score
+	ttable_insert(t_table, TTableEntry{
+		data.position.hash,
+		depth,
+		best_eval,
+		eval_type,
+		best_move,
+	})
+
+	return best_eval
 }
 
 q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
@@ -257,22 +310,23 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 	}
 
 	alpha := alpha
-	best_score := eval(&data.position)
+	best_eval := eval(&data.position)
+	best_move: Move
 	move_count := 0
 	if ply > data.seldepth {
 		data.seldepth = ply
 	}
 
-	if best_score >= beta {
-		return best_score
+	if best_eval >= beta {
+		return best_eval
 	}
-	if best_score > alpha {
-		alpha = best_score
+	if best_eval > alpha {
+		alpha = best_eval
 	}
 
 	us := data.position.turn
 	moves := gen_pseudo_legal_moves(&data.position)
-	move_scores := score_moves(moves[:], ply, data)
+	move_scores := score_moves(moves[:], ply, best_move, data)
 	defer {
 		delete(moves)
 		delete(move_scores)
@@ -308,25 +362,25 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 		if is_in_check(us, &data.position) do continue
 		move_count += 1
 
-		score := -q_search(-beta, -alpha, ply + 1, data)
+		eval := -q_search(-beta, -alpha, ply + 1, data)
 
 		if data.aborted do return 0
 		
-		if score >= beta {
-			return score
+		if eval >= beta {
+			return eval
 		}
 
-		if score > best_score {
-			best_score = score
+		if eval > best_eval {
+			best_eval = eval
 
-			if score > alpha {
-				alpha = score
+			if eval > alpha {
+				alpha = eval
 				update_pv(ply, move, data)
 			}
 		}
 	}
 
-	return best_score
+	return best_eval
 }
 
 update_pv :: proc(ply: int, move: Move, data: ^SearchData) {
@@ -345,11 +399,11 @@ update_pv :: proc(ply: int, move: Move, data: ^SearchData) {
 	)
 }
 
-score_moves :: proc(movelist: []Move, ply: int, data: ^SearchData) -> (scores: [dynamic]int) {
+score_moves :: proc(movelist: []Move, ply: int, best_move: Move, data: ^SearchData) -> (scores: [dynamic]int) {
 	resize(&scores, len(movelist))
 	for move, i in movelist {
 		if move == NULL_MOVE do break
-		if move == data.pv_table[0][ply] {
+		if move == best_move {
 			scores[i] = 100_000
 			continue
 		}

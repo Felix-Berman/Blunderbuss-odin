@@ -16,7 +16,7 @@ description = "SPRT test automation for the Blunderbuss engine using fastchess.\
     By default it will compare the current worktree to the HEAD of main."
 
 def main():
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    timestamp = time.strftime("%Y%m%d_%H")
 
     os.makedirs(ENGINE_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -76,13 +76,8 @@ def main():
 
     log(f"Executing: {cmd_str}")
 
-    out = run_command(cmd_str)
+    subprocess.run(cmd_str, cwd=CWD, shell=True, check=True)
 
-    # append stdout tail to log
-    tail = out.splitlines()[-9:]
-
-    with open(log_file, 'a', encoding='utf-8') as f:
-        f.write("\n".join(tail))
 
 def cleanup():
     run_command("git worktree remove ../blunderbuss_temp_base")

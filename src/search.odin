@@ -147,8 +147,11 @@ root_search :: proc(data: ^SearchData) -> int {
 		nps := f64(data.nodes) / time.duration_seconds(elapsed)
 		len := data.pv_length[0]
 		pv_str := to_string(data.pv_table[0][:len], context.temp_allocator)
-		fmt.printfln("info depth %d seldepth %d nodes %d time %d nps %d score %s %d pv %s",
-			depth, data.seldepth, data.nodes, elapsed_ms, int(nps), eval_type, best_eval, pv_str)
+		fmt.printfln(
+			"info depth %d seldepth %d nodes %d time %d nps %d hashfull %d score %s %d pv %s",
+			depth, data.seldepth, data.nodes, elapsed_ms, int(nps),
+			hashfull(t_table), eval_type, best_eval, pv_str
+		)
 	}
 
 	move_str := to_string(best_move)
@@ -250,7 +253,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 			if QUIET == get_flags(move) {
 				store_killer(move, ply, data)
 			}
-			ttable_insert(t_table, TTableEntry{
+			ttable_insert(&t_table, TTableEntry{
 				data.position.hash,
 				depth,
 				eval,
@@ -279,7 +282,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		return 0
 	}
 
-	ttable_insert(t_table, TTableEntry{
+	ttable_insert(&t_table, TTableEntry{
 		data.position.hash,
 		depth,
 		best_eval,
@@ -347,8 +350,8 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 			defer delete(move_str)
 
 			// validate static exchange accuracy
-			recursive_see_val := recursive_see_root(&data.position, move)
 			see_val := see(&data.position, move)
+			recursive_see_val := recursive_see_root(&data.position, move)
 			if see_val != recursive_see_val {
 				display(data.position)
 				fmt.println(to_string(move, context.temp_allocator))
@@ -476,20 +479,20 @@ see :: proc(position: ^Position, move: Move) -> int {
 	to := int(move.to)
 	to_bb := to_bitboard(to)
 	victim_type: PieceType
+	us := position.turn
+	occ := occupied(position)
+	gain: [32]int
+	depth := 0
 
 	if EP_CAPTURE == get_flags(move) {
 		victim_type = .Pawn
+		ep_bb := to_bitboard(position.ep_sq)
+		occ &~= ep_bb >> 8 if us == .White else ep_bb << 8
 	} else {
 		victim, ok := piece_on(position, to)
 		assert(ok, "No piece on captured to square")
 		victim_type = victim.type
 	}
-
-	us := position.turn
-	occ := occupied(position)
-
-	gain: [32]int
-	depth := 0
 
 	gain[0] = piece_value[victim_type]
 
@@ -607,17 +610,24 @@ recursive_see :: proc(position: ^Position, to: int) -> (value: int) {
 recursive_see_root :: proc(position: ^Position, move: Move) -> (value: int) {
 	move := move
 	to := int(move.to)
-	victim, ok := piece_on(position, to)
-	assert(ok, "No victim in recursive see")
 
-	victim_val := piece_value[victim.type]
+	victim_type: PieceType
+	if EP_CAPTURE == get_flags(move) {
+		victim_type = .Pawn
+	} else {
+		victim, ok := piece_on(position, to)
+		assert(ok, "No victim in recursive see")
+		victim_type = victim.type
 
-	if victim.type == .King {
-		return victim_val
+		// strip promotion information from flags
+		set_flags(&move, {.Capture})	
 	}
 
-	// strip promotion information from flags
-	set_flags(&move, {.Capture})	
+	victim_val := piece_value[victim_type]
+
+	if victim_type == .King {
+		return victim_val
+	}
 
 	make_move(position, move)
 	value += victim_val - recursive_see(position, to)

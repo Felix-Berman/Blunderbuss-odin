@@ -91,7 +91,7 @@ display_board :: proc(position: Position) {
     if position.ep_sq != 64 {
         file := position.ep_sq % 8
         rank := position.ep_sq / 8
-        fmt.sbprintfln(&builder, "En passant square: %c%d", 'a'+file, rank+1)
+        fmt.sbprintfln(&builder, "En passant square: %c%d", 'h'-file, rank+1)
     } else {
         fmt.sbprintln(&builder, "En passant square: -")
     }

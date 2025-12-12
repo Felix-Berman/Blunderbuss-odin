@@ -22,7 +22,7 @@ uci_loop :: proc() {
 	defer delete(position.history)
 
 	t_table = make_ttable()
-	defer delete(t_table)
+	defer delete(t_table.entries)
 
 	uci_loop:
 	for {
@@ -43,11 +43,15 @@ uci_loop :: proc() {
 		case "uci":
 			fmt.println("id name Blunderbuss")
 			fmt.println("id author Felix Berman")
+			fmt.printfln("option name Hash type spin default %d min 0 max 64000",
+				DEFAULT_HASH_SIZE_MB)
+			fmt.println("option name Clear Hash type button")
 			fmt.println("uciok")
 		case "debug":
 		case "isready":
 			fmt.println("readyok")
 		case "setoption":
+			set_option(&line)
 		case "ucinewgame":
 			delete(position.history)
 			position = starting_position()
@@ -81,6 +85,26 @@ uci_loop :: proc() {
 
 	if err := bufio.scanner_error(&scanner); err != nil {
 		fmt.eprintfln("error scanning input: %v", err)
+	}
+}
+
+set_option :: proc(line: ^string) {
+	for cmd in strings.split_iterator(line, " ") {
+		if strings.equal_fold(cmd, "hash") {
+			fmt.println("setting hash")
+			if val_str, ok := strings.split_iterator(line, " "); ok {
+				size := get_next_int(line) or_break
+				resize_ttable(&t_table, size)
+				fmt.println("setting hash", size)
+			}
+		}
+
+		if strings.equal_fold(cmd, "clear") {
+			cmd2 := strings.split_iterator(line, " ") or_break
+			if strings.equal_fold(cmd2, "hash") {
+				clear_ttable(&t_table)
+			}
+		}
 	}
 }
 

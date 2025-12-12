@@ -247,7 +247,9 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		if data.aborted do return 0
 
 		if eval >= beta {
-			store_killer(move, ply, data)
+			if QUIET == get_flags(move) {
+				store_killer(move, ply, data)
+			}
 			ttable_insert(t_table, TTableEntry{
 				data.position.hash,
 				depth,
@@ -403,10 +405,11 @@ update_pv :: proc(ply: int, move: Move, data: ^SearchData) {
 
 // score moves in order of:
 //	TT move
-//	positive material captures
+//	positive trades/captures
+//	equal trades
 //	killer moves
-//	negative material captures
-//	all other moves
+//	negative trades/captures
+//	remaining moves
 score_moves :: proc(movelist: []Move, ply: int, best_move: Move, data: ^SearchData) -> (scores: [dynamic]int) {
 	resize(&scores, len(movelist))
 	for move, i in movelist {
@@ -418,9 +421,7 @@ score_moves :: proc(movelist: []Move, ply: int, best_move: Move, data: ^SearchDa
 
 		flags := get_flags(move)
 		if .Capture in flags {
-			moved := piece_on(&data.position, move.from) or_continue
-			captured := piece_on(&data.position, move.to) or_continue
-			scores[i] += 10_000 + piece_value[captured.type] - piece_value[moved.type]
+			scores[i] += 10_000 + see(&data.position, move)
 		} else {
 			for killer in data.killer_moves[ply] {
 				if move == killer {
@@ -474,10 +475,14 @@ threefold_repetition :: proc(info: ^SearchData, search_ply: int) -> bool {
 see :: proc(position: ^Position, move: Move) -> int {
 	to := int(move.to)
 	to_bb := to_bitboard(to)
-	victim, ok := piece_on(position, to)
+	victim_type: PieceType
 
-	if !ok { // non capture
-		return 0
+	if EP_CAPTURE == get_flags(move) {
+		victim_type = .Pawn
+	} else {
+		victim, ok := piece_on(position, to)
+		assert(ok, "No piece on captured to square")
+		victim_type = victim.type
 	}
 
 	us := position.turn
@@ -486,12 +491,10 @@ see :: proc(position: ^Position, move: Move) -> int {
 	gain: [32]int
 	depth := 0
 
-	victim_type := victim.type
 	gain[0] = piece_value[victim_type]
 
-	attacker: Piece
 	attackers := attackers_to(position, to)
-	attacker, ok = piece_on(position, move.from)
+	attacker, ok := piece_on(position, move.from)
 	assert(ok, "Attempt to move from empty square")
 	assert(attackers[us] & to_bitboard(move.from) != 0, 
 		"Initial attacker not included in see attack set")

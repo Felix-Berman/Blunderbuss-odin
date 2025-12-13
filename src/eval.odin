@@ -1,6 +1,6 @@
 package blunderbuss
 
-piece_value :[PieceType]int = {
+piece_value: [PieceType]int = {
 	.Pawn = 100,
 	.Knight = 300,
 	.Bishop = 350,
@@ -9,9 +9,21 @@ piece_value :[PieceType]int = {
 	.King = 30_000
 }
 
+piece_phase: [PieceType]int = {
+	.Pawn = 0,
+	.Knight = 1,
+	.Bishop = 1,
+	.Rook = 2,
+	.Queen = 4,
+	.King = 0,
+}
+
 eval :: proc(position: ^Position) -> int {
-	scores: [Colour]int
+	mg: [Colour]int
+	eg: [Colour]int
 	us := position.turn
+	them := toggle(us)
+	phase := 0
 
 	for bbs, side in position.pieces {
 		for bb, piece in bbs {
@@ -22,24 +34,44 @@ eval :: proc(position: ^Position) -> int {
 					sq ~= 56
 				}
 
-				scores[side] += piece_value[piece] + piece_sq_tbl[piece][sq]
+				mg[side] += piece_value[piece] + mg_piece_sq_tbl[piece][sq]
+				eg[side] += piece_value[piece] + eg_piece_sq_tbl[piece][sq]
+				phase += piece_phase[piece]
 			}
 		}
 	}
 
-	return scores[us] - scores[toggle(us)]
+	// in case of promotion
+	if phase > 24 {
+		phase = 24
+	}
+
+	mg_eval := mg[us] - mg[them]
+	eg_eval := eg[us] - eg[them]
+
+	return (mg_eval * phase + eg_eval * (24 - phase)) / 24
 }
 
-piece_sq_tbl: [PieceType][64]int = {
-	.Pawn = pawn_tbl,
-	.Knight = knight_tbl,
-	.Bishop = bishop_tbl,
-	.Rook = rook_tbl,
-	.Queen = queen_tbl,
-	.King = king_tbl,
+mg_piece_sq_tbl: [PieceType][64]int = {
+	.Pawn = mg_pawn_tbl,
+	.Knight = mg_knight_tbl,
+	.Bishop = mg_bishop_tbl,
+	.Rook = mg_rook_tbl,
+	.Queen = mg_queen_tbl,
+	.King = mg_king_tbl,
 }
 
-pawn_tbl: [64]int = {
+eg_piece_sq_tbl: [PieceType][64]int = {
+	.Pawn = eg_pawn_tbl,
+	.Knight = eg_knight_tbl,
+	.Bishop = eg_bishop_tbl,
+	.Rook = eg_rook_tbl,
+	.Queen = eg_queen_tbl,
+	.King = eg_king_tbl,
+}
+
+
+mg_pawn_tbl: [64]int = {
 	 0,  0,  0,  0,  0,  0,  0,  0,
 	50, 50, 50, 50, 50, 50, 50, 50,
 	10, 10, 20, 30, 30, 20, 10, 10,
@@ -50,7 +82,18 @@ pawn_tbl: [64]int = {
 	 0,  0,  0,  0,  0,  0,  0,  0,
 }
 
-knight_tbl: [64]int = {
+eg_pawn_tbl: [64]int = {
+	 0,  0,  0,  0,  0,  0,  0,  0,
+	50, 50, 50, 50, 50, 50, 50, 50,
+	10, 10, 20, 30, 30, 20, 10, 10,
+	 5,  5, 10, 25, 25, 10,  5,  5,
+	 0,  0,  0, 20, 20,  0,  0,  0,
+	 5, -5,-10,  0,  0,-10, -5,  5,
+	 5, 10, 10,-20,-20, 10, 10,  5,
+	 0,  0,  0,  0,  0,  0,  0,  0,
+}
+
+mg_knight_tbl: [64]int = {
 	-50,-40,-30,-30,-30,-30,-40,-50,
 	-40,-20,  0,  0,  0,  0,-20,-40,
 	-30,  0, 10, 15, 15, 10,  0,-30,
@@ -61,7 +104,18 @@ knight_tbl: [64]int = {
 	-50,-40,-30,-30,-30,-30,-40,-50,
 }
 
-bishop_tbl: [64]int = {
+eg_knight_tbl: [64]int = {
+	-50,-40,-30,-30,-30,-30,-40,-50,
+	-40,-20,  0,  0,  0,  0,-20,-40,
+	-30,  0, 10, 15, 15, 10,  0,-30,
+	-30,  5, 15, 20, 20, 15,  5,-30,
+	-30,  0, 15, 20, 20, 15,  0,-30,
+	-30,  5, 10, 15, 15, 10,  5,-30,
+	-40,-20,  0,  5,  5,  0,-20,-40,
+	-50,-40,-30,-30,-30,-30,-40,-50,
+}
+
+mg_bishop_tbl: [64]int = {
 	-20,-10,-10,-10,-10,-10,-10,-20,
 	-10,  0,  0,  0,  0,  0,  0,-10,
 	-10,  0,  5, 10, 10,  5,  0,-10,
@@ -72,7 +126,18 @@ bishop_tbl: [64]int = {
 	-20,-10,-10,-10,-10,-10,-10,-20,
 }
 
-rook_tbl: [64]int = {
+eg_bishop_tbl: [64]int = {
+	-20,-10,-10,-10,-10,-10,-10,-20,
+	-10,  0,  0,  0,  0,  0,  0,-10,
+	-10,  0,  5, 10, 10,  5,  0,-10,
+	-10,  5,  5, 10, 10,  5,  5,-10,
+	-10,  0, 10, 10, 10, 10,  0,-10,
+	-10, 10, 10, 10, 10, 10, 10,-10,
+	-10,  5,  0,  0,  0,  0,  5,-10,
+	-20,-10,-10,-10,-10,-10,-10,-20,
+}
+
+mg_rook_tbl: [64]int = {
 	  0,  0,  0,  0,  0,  0,  0,  0,
 	  5, 10, 10, 10, 10, 10, 10,  5,
 	 -5,  0,  0,  0,  0,  0,  0, -5,
@@ -83,7 +148,18 @@ rook_tbl: [64]int = {
 	  0,  0,  0,  5,  5,  0,  0,  0
 }
 
-queen_tbl: [64]int = {
+eg_rook_tbl: [64]int = {
+	  0,  0,  0,  0,  0,  0,  0,  0,
+	  5, 10, 10, 10, 10, 10, 10,  5,
+	 -5,  0,  0,  0,  0,  0,  0, -5,
+	 -5,  0,  0,  0,  0,  0,  0, -5,
+	 -5,  0,  0,  0,  0,  0,  0, -5,
+	 -5,  0,  0,  0,  0,  0,  0, -5,
+	 -5,  0,  0,  0,  0,  0,  0, -5,
+	  0,  0,  0,  5,  5,  0,  0,  0
+}
+
+mg_queen_tbl: [64]int = {
 	-20,-10,-10, -5, -5,-10,-10,-20,
 	-10,  0,  0,  0,  0,  0,  0,-10,
 	-10,  0,  5,  5,  5,  5,  0,-10,
@@ -94,7 +170,18 @@ queen_tbl: [64]int = {
 	-20,-10,-10, -5, -5,-10,-10,-20
 }
 
-king_tbl: [64]int = {
+eg_queen_tbl: [64]int = {
+	-20,-10,-10, -5, -5,-10,-10,-20,
+	-10,  0,  0,  0,  0,  0,  0,-10,
+	-10,  0,  5,  5,  5,  5,  0,-10,
+	 -5,  0,  5,  5,  5,  5,  0, -5,
+	  0,  0,  5,  5,  5,  5,  0, -5,
+	-10,  5,  5,  5,  5,  5,  0,-10,
+	-10,  0,  5,  0,  0,  0,  0,-10,
+	-20,-10,-10, -5, -5,-10,-10,-20
+}
+
+mg_king_tbl: [64]int = {
 	-30,-40,-40,-50,-50,-40,-40,-30,
 	-30,-40,-40,-50,-50,-40,-40,-30,
 	-30,-40,-40,-50,-50,-40,-40,-30,
@@ -103,4 +190,15 @@ king_tbl: [64]int = {
 	-10,-20,-20,-20,-20,-20,-20,-10,
 	 20, 20,  0,  0,  0,  0, 20, 20,
 	 20, 30, 10,  0,  0, 10, 30, 20
+}
+
+eg_king_tbl: [64]int = {
+	-50,-40,-30,-30,-30,-30,-40,-50,
+	-40,-20,  0,  0,  0,  0,-20,-40,
+	-30,  0, 10, 15, 15, 10,  0,-30,
+	-30,  5, 15, 20, 20, 15,  5,-30,
+	-30,  0, 15, 20, 20, 15,  0,-30,
+	-30,  5, 10, 15, 15, 10,  5,-30,
+	-40,-20,  0,  5,  5,  0,-20,-40,
+	-50,-40,-30,-30,-30,-30,-40,-50,
 }

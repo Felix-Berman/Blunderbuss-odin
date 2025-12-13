@@ -43,7 +43,7 @@ uci_loop :: proc() {
 		case "uci":
 			fmt.println("id name Blunderbuss")
 			fmt.println("id author Felix Berman")
-			fmt.printfln("option name Hash type spin default %d min 0",
+			fmt.printfln("option name Hash type spin default %d min 0 max 64000",
 				DEFAULT_HASH_SIZE_MB)
 			fmt.println("option name Clear Hash type button")
 			fmt.println("uciok")

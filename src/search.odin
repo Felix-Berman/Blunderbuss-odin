@@ -202,8 +202,12 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		best_move = tt_entry.best_move
 
 		if tt_entry.depth >= depth {
-			// todo: re-evaluate distance to mate on mate scores
 			tt_eval := tt_entry.eval
+			if tt_eval >= MATE_EVAL - MAX_DEPTH {
+				tt_eval -= ply
+			} else if tt_eval <= -MATE_EVAL + MAX_DEPTH {
+				tt_eval += ply
+			}
 
 			switch tt_entry.eval_type {
 			case .Exact:
@@ -282,10 +286,18 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		return 0
 	}
 
+	// Store mate scores in transposition table relative to node instead of root
+	tt_eval := best_eval
+	if tt_eval >= MATE_EVAL - MAX_DEPTH {
+		tt_eval += ply
+	} else if tt_eval <= -MATE_EVAL + MAX_DEPTH {
+		tt_eval -= ply
+	}
+
 	ttable_insert(&t_table, TTableEntry{
 		data.position.hash,
 		depth,
-		best_eval,
+		tt_eval,
 		eval_type,
 		best_move,
 	})

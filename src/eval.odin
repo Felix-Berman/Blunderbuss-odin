@@ -1,7 +1,7 @@
 package blunderbuss
 
-import "core:fmt"
 import "base:intrinsics"
+import "base:builtin"
 
 piece_value: [PieceType]int = {
 	.Pawn = 100,
@@ -21,6 +21,10 @@ piece_phase: [PieceType]int = {
 	.King = 0,
 }
 
+TOTAL_PHASE :: 24
+SCALED_PHASE :: 256
+MG_THRESHOLD :: 128
+
 MG_DOUBLED_PAWN_WEIGHT :: 30
 EG_DOUBLED_PAWN_WEIGHT :: 70
 MG_TRIPLED_PAWN_PENALTY :: 10
@@ -34,9 +38,29 @@ EG_BACKWARD_PAWN_PENALTY :: 10
 MG_BISHOP_PAIR_WEIGHT :: 10
 EG_BISHOP_PAIR_WEIGHT :: 50
 
+KNIGHT_TROPISM_D :: 4
+BISHOP_TROPISM_D :: 6
+ROOK_TROPISM_D :: 7
+QUEEN_TROPISM_D :: 8
+KNIGHT_TROPISM_W :: 2
+BISHOP_TROPISM_W :: 2
+ROOK_TROPISM_W :: 3
+QUEEN_TROPISM_W :: 5
+
+ZONE_WEIGHT_QUEEN :: 4
+ZONE_WEIGHT_ROOK :: 2
+ZONE_WEIGHT_BISHOP :: 1
+ZONE_WEIGHT_KNIGHT :: 1
+
+SHIELD_WEIGHT :: 2
+DANGER_WEIGHT_INV :: 8
+
 eval :: proc(position: ^Position) -> int {
 	mg_material: [Colour]int
 	eg_material: [Colour]int
+	mg_pawn: [Colour]int
+	eg_pawn: [Colour]int
+	king_danger: [Colour]int
 	us := position.turn
 	them := toggle(us)
 	phase := 0
@@ -64,20 +88,95 @@ eval :: proc(position: ^Position) -> int {
 	}
 
 	// in case of promotion
-	if phase > 24 {
-		phase = 24
+	if phase > TOTAL_PHASE {
+		phase = TOTAL_PHASE
 	}
 
+	// rescale the game phase for finer resolution
+	phase = (phase * SCALED_PHASE + (TOTAL_PHASE / 2)) / TOTAL_PHASE
+
+	// compare material
 	mg_eval := mg_material[us] - mg_material[them]
 	eg_eval := eg_material[us] - eg_material[them]
 
-	pawns_us := position.pieces[us][.Pawn]
-	pawns_them := position.pieces[them][.Pawn]
-	mg_pawn_us, eg_pawn_us := pawn_structure(us, pawns_us, pawns_them)
-	mg_pawn_them, eg_pawn_them := pawn_structure(them, pawns_them, pawns_us)
+	for us in Colour {
+		them := toggle(us)
 
-	mg_eval += mg_pawn_us - mg_pawn_them
-	eg_eval += eg_pawn_us - eg_pawn_them
+		// compare pawn structure considering passed, isolated, doubled and
+		// backwards pawns
+		pawns_us := position.pieces[us][.Pawn]
+		pawns_them := position.pieces[them][.Pawn]
+		mg, eg := pawn_structure(us, pawns_us, pawns_them)
+		mg_pawn[us] += mg
+		eg_pawn[us] += eg
+
+		king_sq := lsb(position.pieces[us][.King])
+		knight_bb := position.pieces[them][.Knight]
+		bishop_bb := position.pieces[them][.Bishop]
+		rook_bb := position.pieces[them][.Rook]
+		queen_bb := position.pieces[them][.Queen]
+
+		// we likely aren't in danger if theres no queen
+		if queen_bb == 0 || phase < MG_THRESHOLD {
+			continue
+		}
+
+		king_danger[us] += tropism(king_sq, knight_bb, KNIGHT_TROPISM_D, KNIGHT_TROPISM_W)
+		king_danger[us] += tropism(king_sq, bishop_bb, BISHOP_TROPISM_D, BISHOP_TROPISM_W)
+		king_danger[us] += tropism(king_sq, rook_bb, ROOK_TROPISM_D, ROOK_TROPISM_W)
+		king_danger[us] += tropism(king_sq, queen_bb, QUEEN_TROPISM_D, QUEEN_TROPISM_W)
+
+		king_zone := SQ_MASKS[king_sq].king_zone
+		knights_in_zone := intrinsics.count_ones(knight_bb & king_zone)
+		bishops_in_zone := intrinsics.count_ones(bishop_bb & king_zone)
+		rooks_in_zone := intrinsics.count_ones(rook_bb & king_zone)
+		queens_in_zone := intrinsics.count_ones(queen_bb & king_zone)
+
+		// attackers within 2 squares of king
+		king_danger[us] += int(knights_in_zone) * ZONE_WEIGHT_KNIGHT
+		king_danger[us] += int(bishops_in_zone) * ZONE_WEIGHT_BISHOP
+		king_danger[us] += int(rooks_in_zone) * ZONE_WEIGHT_ROOK
+		king_danger[us] += int(queens_in_zone) * ZONE_WEIGHT_QUEEN
+
+		// pawn_shielding
+		shield: int
+
+		king_file := SQ_MASKS[king_sq].file_mask
+		left_file := (king_file << 1) &~ H_FILE
+		right_file := (king_file >> 1) &~ A_FILE
+		files: [3]u64 = {king_file, left_file, right_file}
+		
+		for file in files {
+			protectors := file & pawns_us
+			if protectors == 0 {
+				shield -= 4
+			} else {
+				pawn_sq := lsb(protectors) if us == .White else msb(protectors)
+				pushed := 3 - pawn_sq / 8
+				shield += builtin.max(pushed, 0)
+			}
+
+			// semi-open or open_file for opponent
+			if pawns_them & file == 0 {
+				shield -= 2
+			}
+		}
+
+		// shielding mitigates danger. prevent passivity by clamping at 0
+		king_danger[us] -= shield * SHIELD_WEIGHT
+		if king_danger[us] < 0 {
+			king_danger[us] = 0
+		}
+
+		// Danger to king scales nonlinearly
+		king_danger[us] = king_danger[us] * king_danger[us] / DANGER_WEIGHT_INV
+	}
+
+	mg_eval += mg_pawn[us] - mg_pawn[them]
+	eg_eval += eg_pawn[us] - eg_pawn[them]
+
+	// the side with tempo is under less (inflicting more) danger
+	mg_eval += king_danger[them] * 105/100 - king_danger[us]
 
 	if bishop_count[us] >= 2 {
 		mg_eval += MG_BISHOP_PAIR_WEIGHT
@@ -88,7 +187,7 @@ eval :: proc(position: ^Position) -> int {
 		eg_eval -= EG_BISHOP_PAIR_WEIGHT
 	}
 
-	return (mg_eval * phase + eg_eval * (24 - phase)) / 24
+	return (mg_eval * phase + eg_eval * (SCALED_PHASE - phase)) / SCALED_PHASE
 }
 
 pawn_structure :: proc(us: Colour, pawns_us, pawns_them: u64) -> (mg, eg: int) {
@@ -158,6 +257,24 @@ pawn_structure :: proc(us: Colour, pawns_us, pawns_them: u64) -> (mg, eg: int) {
 
 	return
 }
+
+// Tropism: simple metric of king safety that looks at distance between
+// attackers and the king. doesn't consider any blocking pieces in between
+tropism :: proc(king_sq: int, bb: u64, cutoff, weight: int) -> (tropism: int) {
+	bb := bb
+
+	for bb > 0 {
+		sq := pop_lsb(&bb)
+		d := manhatten_distance(king_sq, sq)
+		
+		if d <= cutoff {
+			tropism += weight * (cutoff - d)
+		}
+	}
+	
+	return
+}
+
 
 mg_piece_sq_tbl: [PieceType][64]int = {
 	.Pawn = mg_pawn_tbl,

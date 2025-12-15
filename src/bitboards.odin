@@ -1,11 +1,12 @@
 package blunderbuss
 
+import "base:builtin"
 import  "base:intrinsics"
 
 // Bitboards defined from MSB -> LSB : A8 -> H1
 // i.e. H1 = 0, A1 = 7, H8 = 56, A8 = 63
-// This encoding makes visualising bitboards in hex form more intuitive. Reading left to right maps to 
-// top left to bottom right.
+// This encoding makes visualising bitboards in hex form more intuitive.
+// Reading left to right maps to top left to bottom right.
 // Shift operations are also easy to visualise, << shifts west/north and >> shifts east/south
 
 A_FILE: u64 : 0x8080808080808080
@@ -40,7 +41,7 @@ Square :: enum {
     H8 ,  G8 ,  F8 ,  E8 ,  D8 ,  C8 ,  B8 ,  A8 ,
 }
 
-to_bitboard :: proc(sq: $T) -> u64 
+to_bitboard :: proc "contextless" (sq: $T) -> u64 
     where intrinsics.type_is_numeric(T) {
     return 1 << uint(sq)
 }
@@ -50,6 +51,7 @@ SqMasks :: struct {
     file_mask: u64,
     diagonal_mask: u64,
     antidiag_mask: u64,
+	king_zone: u64,
 }
 
 init_sq_masks :: proc "contextless" () -> (masks: [64]SqMasks) {
@@ -71,6 +73,16 @@ init_sq_masks :: proc "contextless" () -> (masks: [64]SqMasks) {
             } else {
                 masks[sq].antidiag_mask = MAIN_ANTIDIAG >> ((7 - rank - file) * 8)
             }
+
+			for i: uint = 0; i <= 4; i += 1 {
+				if rank + i - 2 < 0 || rank + i + 2 > 7do continue
+				for j: uint = 0; j <= 4; j += 1 {
+					if file + j - 2 < 0 || file + j + 2 > 7 do continue
+
+					set_sq := 8 * (rank + i - 2) + file + j - 2
+					masks[sq].king_zone |= to_bitboard(set_sq)
+				}
+			}
         }
     }
     return
@@ -78,6 +90,10 @@ init_sq_masks :: proc "contextless" () -> (masks: [64]SqMasks) {
 
 lsb :: proc(bitboard: u64) -> int {
     return int(intrinsics.count_trailing_zeros(bitboard))
+}
+
+msb :: proc(bitboard: u64) -> int {
+	return int(intrinsics.count_leading_zeros(bitboard))
 }
 
 pop_lsb :: proc(bitboard: ^u64) -> int {
@@ -100,4 +116,16 @@ mirror_horizontally :: proc(bitboard: u64) -> u64 {
     bb = ((bb >> 2) & k2) + 4 * (bb & k2)
     bb = ((bb >> 4) & k4) + 16 * (bb & k4)
     return bb
+}
+
+manhatten_distance :: proc(sq1, sq2: $T) -> int
+    where intrinsics.type_is_numeric(T) {
+	return builtin.abs(sq1 % 8 - sq2 % 8) + builtin.abs(sq1 / 8 - sq2 / 8)
+}
+
+chebyshev_distance :: proc(sq1, sq2: $T) -> int
+	where intrinsics.type_is_numberic(T) {
+	d_rank := builtin.abs(sq1 % 8 - sq2 % 8)
+	d_file := builtin.abs(sq1 / 8 - sq2 / 8)
+	return builtin.max(d_rank, d_file)
 }

@@ -8,26 +8,26 @@ import  "base:intrinsics"
 // top left to bottom right.
 // Shift operations are also easy to visualise, << shifts west/north and >> shifts east/south
 
-A_FILE :: 0x8080808080808080
-B_FILE :: A_FILE >> 1
-C_FILE :: B_FILE >> 1
-D_FILE :: C_FILE >> 1
-E_FILE :: D_FILE >> 1
-F_FILE :: E_FILE >> 1
-G_FILE :: F_FILE >> 1
-H_FILE :: G_FILE >> 1
+A_FILE: u64 : 0x8080808080808080
+B_FILE: u64 : A_FILE >> 1
+C_FILE: u64 : B_FILE >> 1
+D_FILE: u64 : C_FILE >> 1
+E_FILE: u64 : D_FILE >> 1
+F_FILE: u64 : E_FILE >> 1
+G_FILE: u64 : F_FILE >> 1
+H_FILE: u64 : G_FILE >> 1
 
-RANK_1 :: 0xff
-RANK_2 :: RANK_1 << 8
-RANK_3 :: RANK_2 << 8
-RANK_4 :: RANK_3 << 8
-RANK_5 :: RANK_4 << 8
-RANK_6 :: RANK_5 << 8
-RANK_7 :: RANK_6 << 8
-RANK_8 :: RANK_7 << 8
+RANK_1: u64 : 0xff
+RANK_2: u64 : RANK_1 << 8
+RANK_3: u64 : RANK_2 << 8
+RANK_4: u64 : RANK_3 << 8
+RANK_5: u64 : RANK_4 << 8
+RANK_6: u64 : RANK_5 << 8
+RANK_7: u64 : RANK_6 << 8
+RANK_8: u64 : RANK_7 << 8
 
-MAIN_DIAGONAL :: 0x8040201008040201;
-MAIN_ANTIDIAG :: 0x0102040810204080;
+MAIN_DIAGONAL: u64 : 0x8040201008040201;
+MAIN_ANTIDIAG: u64 : 0x0102040810204080;
 
 Square :: enum {
     H1 ,  G1 ,  F1 ,  E1 ,  D1 ,  C1 ,  B1 ,  A1 ,

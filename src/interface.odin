@@ -95,7 +95,6 @@ set_option :: proc(line: ^string) {
 			if val_str, ok := strings.split_iterator(line, " "); ok {
 				size := get_next_int(line) or_break
 				resize_ttable(&t_table, size)
-				fmt.println("setting hash", size)
 			}
 		}
 

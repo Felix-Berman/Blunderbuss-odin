@@ -15,6 +15,17 @@ MAX_DEPTH :: 64
 
 DELTA_MARGIN :: 200
 
+TT_MOVE_SCORE :: 100_000
+POSITIVE_CAPTURE_SCORE :: 50_000
+KILLER_SCORE :: 2000
+MAX_HISTORY :: 20_000
+HISTORY_BONUS :: 400
+PROMOTION_SCORE :: 800
+
+// global tables
+t_table: TTable
+continuation_history: [PieceType][64][64][64]int
+
 SearchData :: struct {
 	position: Position,
 	max_depth: int,
@@ -31,7 +42,7 @@ SearchData :: struct {
 	killer_moves: [MAX_DEPTH][2]Move,
 }
 
-default_data :: proc(position: Position) -> (data: SearchData) {
+init_data :: proc(position: Position) -> (data: SearchData) {
 	data.position = position
 	data.max_depth = MAX_DEPTH
 	data.max_nodes = builtin.max(int)
@@ -52,12 +63,16 @@ default_data :: proc(position: Position) -> (data: SearchData) {
 	return
 }
 
+deinit_data :: proc(data: ^SearchData) {
+	delete(data.position.history)
+	free(data)
+}
+
 search_thread :: proc(data: rawptr) {
 	data := cast(^SearchData)data
 	root_search(data)
 
-	delete(data.position.history)
-	free(data)
+	deinit_data(data)
 }
 
 root_search :: proc(data: ^SearchData) -> int {
@@ -87,7 +102,7 @@ root_search :: proc(data: ^SearchData) -> int {
 		if found_mate do break
 		best_eval := MIN_EVAL
 
-		move_scores := score_moves(moves[:], 0, best_move, data)
+		move_scores := score_moves(moves[:], 0, best_move, NULL_MOVE, NIL_PIECE, data)
 		defer delete(move_scores)
 
 		data.pv_length = {}
@@ -115,7 +130,7 @@ root_search :: proc(data: ^SearchData) -> int {
 				bufio.writer_flush(&writer)
 			}
 
-			eval := -negamax(MIN_EVAL, MAX_EVAL, depth - 1, ply + 1, data)
+			eval := -negamax(MIN_EVAL, MAX_EVAL, depth - 1, ply + 1, move, data)
 
 			if data.aborted do break iterative_deepening
 
@@ -163,7 +178,7 @@ root_search :: proc(data: ^SearchData) -> int {
 	return data.nodes
 }
 
-negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
+negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData) -> int {
 	if data.nodes % 2048 == 0 {
 		if !data.infinite && time.tick_since(data.start_time) >= data.allowed_time {
 			data.aborted = true
@@ -195,6 +210,9 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 	best_eval := MIN_EVAL
 	best_move := NULL_MOVE
 	eval_type := EvalType.UpperBound
+
+	prev_piece, ok := piece_on(data.position, prev_move.to)
+	assert(ok, "No piece found at previous move.to")
 
 	zob_hash := data.position.hash
 	tt_entry := probe_ttable(t_table, zob_hash)
@@ -228,15 +246,18 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 
 	us := data.position.turn
 	moves := gen_pseudo_legal_moves(&data.position)
-	move_scores := score_moves(moves[:], ply, best_move, data)
+	move_scores := score_moves(moves[:], ply, best_move, prev_move, prev_piece, data)
+	rejected_quiets := make([dynamic]Move, 0, len(moves))
 	defer {
 		delete(moves)
 		delete(move_scores)
+		delete(rejected_quiets)
 	}
 
 	move_count := 0
 	for i in 0..<len(moves) {
 		move := pick_move(moves[i:], move_scores[i:])
+		flags := get_flags(move) 
 		make_move(&data.position, move)
 		defer unmake_move(&data.position, move)
 
@@ -249,15 +270,24 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		if is_in_check(us, &data.position) do continue
 		move_count += 1
 
-		eval := -negamax(-beta, -alpha, depth - 1, ply + 1, data)
+		eval := -negamax(-beta, -alpha, depth - 1, ply + 1, move, data)
 
 		if data.aborted do return 0
 
 		if eval >= beta {
-			if QUIET == get_flags(move) {
+			if flags & {.Capture, .Promotion} == QUIET {
 				store_killer(move, ply, data)
+
+				bonus := min(depth*depth, HISTORY_BONUS)
+				update_history(prev_piece, prev_move, move, depth*depth)
+
+				// history maluses
+				for move in rejected_quiets {
+					update_history(prev_piece, prev_move, move, -depth*depth/2)
+				}
 			}
-			ttable_insert(&t_table, TTableEntry{
+
+			ttable_insert(&t_table, TTableEntry {
 				data.position.hash,
 				depth,
 				eval,
@@ -265,8 +295,8 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 				move,
 			})
 			return eval
-		}
-		
+		} 
+
 		if eval > best_eval {
 			best_eval = eval
 			best_move = move
@@ -276,6 +306,10 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 				update_pv(ply, move, data)
 				eval_type = .Exact
 			}
+		}
+
+		if flags & {.Capture, .Promotion} == QUIET {
+			append(&rejected_quiets, move)
 		}
 	}
 
@@ -345,7 +379,7 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 
 	us := data.position.turn
 	moves := gen_pseudo_legal_moves(&data.position)
-	move_scores := score_moves(moves[:], ply, best_move, data)
+	move_scores := score_moves(moves[:], ply, best_move, NULL_MOVE, NIL_PIECE, data)
 	defer {
 		delete(moves)
 		delete(move_scores)
@@ -373,7 +407,7 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 		}
 
 		// static exchange evaluation (don't consider trades losing material)
-		if see(&data.position, move) < 0 do continue
+		if see(data.position, move) < 0 do continue
 
 		make_move(&data.position, move)
 		defer unmake_move(&data.position, move)
@@ -423,30 +457,57 @@ update_pv :: proc(ply: int, move: Move, data: ^SearchData) {
 //	positive trades/captures
 //	equal trades
 //	killer moves
+//	continuation history
 //	negative trades/captures
-//	remaining moves
-score_moves :: proc(movelist: []Move, ply: int, best_move: Move, data: ^SearchData) -> (scores: [dynamic]int) {
-	resize(&scores, len(movelist))
+score_moves :: proc(
+	movelist: []Move,
+	ply: int,
+	best_move, prev_move: Move,
+	prev_piece: Piece,
+	data: ^SearchData
+) -> []int {
+
+	scores := make([]int, len(movelist))
+
+	move_loop:
 	for move, i in movelist {
 		if move == NULL_MOVE do break
+
 		if move == best_move {
-			scores[i] = 100_000
+			scores[i] = TT_MOVE_SCORE
 			continue
 		}
 
 		flags := get_flags(move)
+
+		if .Promotion in flags {
+			scores[i] += PROMOTION_SCORE
+		}
+
 		if .Capture in flags {
-			scores[i] += 10_000 + see(&data.position, move)
-		} else {
-			for killer in data.killer_moves[ply] {
-				if move == killer {
-					scores[i] += 9_900
-				}
+			see_val := see(data.position, move)
+			scores[i] += see_val
+
+			if see_val >= 0 {
+				scores[i] += POSITIVE_CAPTURE_SCORE
 			}
+
+			continue
+		}
+
+		for killer in data.killer_moves[ply] {
+			if move == killer {
+				scores[i] += KILLER_SCORE
+				// continue move_loop
+			}
+		}
+
+		if prev_move != NULL_MOVE {
+			scores[i] += continuation_history[prev_piece.type][prev_move.to][move.from][move.to]
 		}
 	}
 
-	return
+	return scores
 }
 
 pick_move :: proc(movelist: []Move, scores: []int) -> Move {
@@ -487,7 +548,7 @@ threefold_repetition :: proc(info: ^SearchData, search_ply: int) -> bool {
 	return false
 }
 
-see :: proc(position: ^Position, move: Move) -> int {
+see :: proc(position: Position, move: Move) -> int {
 	to := int(move.to)
 	to_bb := to_bitboard(to)
 	victim_type: PieceType
@@ -560,7 +621,7 @@ see :: proc(position: ^Position, move: Move) -> int {
 		}
 
 		if no_attackers {
-			display(position^)
+			display(position)
 			display(att)
 			fmt.println(to_string(move, context.temp_allocator))
 			panic("Misalignment between piece bbs and att bb in see")
@@ -585,11 +646,11 @@ see :: proc(position: ^Position, move: Move) -> int {
 
 recursive_see :: proc(position: ^Position, to: int) -> (value: int) {
 	us := position.turn
-	victim, ok := piece_on(position, to)
+	victim, ok := piece_on(position^, to)
 	assert(ok, "No victim in recursive see")
 	victim_val := piece_value[victim.type]
 
-	attackers := attackers_to(position, to)
+	attackers := attackers_to(position^, to)
 	next_attacker: PieceType
 	from: int
 
@@ -627,7 +688,7 @@ recursive_see_root :: proc(position: ^Position, move: Move) -> (value: int) {
 	if EP_CAPTURE == get_flags(move) {
 		victim_type = .Pawn
 	} else {
-		victim, ok := piece_on(position, to)
+		victim, ok := piece_on(position^, to)
 		assert(ok, "No victim in recursive see")
 		victim_type = victim.type
 
@@ -654,3 +715,14 @@ store_killer :: proc(move: Move, ply: int, data: ^SearchData) {
 		data.killer_moves[ply][0] = move
 	}
 }
+
+update_history :: proc(prev_piece: Piece, prev_move, move: Move, bonus: int) {
+	if prev_move == NULL_MOVE do return
+
+	bonus := bonus
+	history := &continuation_history[prev_piece.type][prev_move.to][move.from][move.to]
+
+	// history gravity:
+	// entries with higher scores recieve a smaller fraction of bonus
+	history^ += bonus - builtin.abs(bonus) * history^ / MAX_HISTORY
+}	

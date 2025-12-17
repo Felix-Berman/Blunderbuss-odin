@@ -17,7 +17,7 @@ make_move :: proc(position: ^Position, move: Move) {
 		position.last_irreversible_ply,
     }
 
-    mover, ok := piece_on(position, move.from)
+    mover, ok := piece_on(position^, move.from)
 	assert(ok, "Attempt to move from empty square")
 	assert(mover.colour == us, "Mover colour does not align with turn")
 
@@ -47,7 +47,7 @@ make_move :: proc(position: ^Position, move: Move) {
 		position.hash ~= zobrist_p_sq(captured, ep_target_sq)
         irreversibles.captured_piece = captured
     } else if .Capture in flags {
-        captured, ok := piece_on(position, move.to)
+        captured, ok := piece_on(position^, move.to)
 		assert(ok, "Attempt to capture empty square")
 		assert(captured.colour == them, "Captured colour does not align with opponent")
 		assert(captured.type != .King, "Illegal capture of king")
@@ -172,7 +172,7 @@ unmake_move :: proc(position: ^Position, move: Move) {
 	position.hash = history.hash
 	position.last_irreversible_ply = history.last_irreversible_ply
 
-    mover, ok := piece_on(position, move.to)
+    mover, ok := piece_on(position^, move.to)
     assert(ok && mover.colour == us)
 
     flags := get_flags(move)

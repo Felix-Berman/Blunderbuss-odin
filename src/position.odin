@@ -20,6 +20,8 @@ Piece :: bit_field u8 {
 	type: PieceType | 3,
 }
 
+NIL_PIECE := transmute(Piece)~u8(0)
+
 make_piece :: proc(colour: Colour, type: PieceType) -> Piece {
 	return {
 		type = type,
@@ -40,6 +42,7 @@ Position :: struct {
 	hash: u64,
 	last_irreversible_ply: int,
     history: [dynamic]HistoryData,
+	last_move: Move,
 }
 
 HistoryData :: struct {
@@ -72,14 +75,14 @@ starting_position :: proc() -> (position: Position) {
     position.halfmove_clk = 0
     position.ply = 0
 
-    gen_attack_mask(.White, &position, occupied(&position))
-    gen_attack_mask(.Black, &position, occupied(&position))
+    gen_attack_mask(.White, &position, occupied(position))
+    gen_attack_mask(.Black, &position, occupied(position))
 	position.hash = zobrist_hash(position)
 
     return
 }
 
-occupied :: proc(position: ^Position) -> u64 {
+occupied :: proc(position: Position) -> u64 {
     return position.occupancy[.White] | position.occupancy[.Black]
 }
 
@@ -87,7 +90,7 @@ toggle :: proc(colour: Colour) -> Colour {
     return Colour(int(colour) ~ 1)
 }
 
-piece_on :: proc(position: ^Position, sq: $T) -> (Piece, bool) 
+piece_on :: proc(position: Position, sq: $T) -> (Piece, bool) 
     where intrinsics.type_is_numeric(T) {
 
     for colour in Colour {
@@ -103,8 +106,9 @@ piece_on :: proc(position: ^Position, sq: $T) -> (Piece, bool)
 
 is_in_check :: proc(side: Colour, position: ^Position) -> bool {
 	atk: u64
-	if side == .White do atk = gen_attack_mask(.Black, position, occupied(position))
-	if side == .Black do atk = gen_attack_mask(.White, position, occupied(position))
+	occ := occupied(position^)
+	if side == .White do atk = gen_attack_mask(.Black, position, occ)
+	if side == .Black do atk = gen_attack_mask(.White, position, occ)
     return position.pieces[side][.King] & atk != 0
 }
 
@@ -179,7 +183,7 @@ parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {
     fullmove := strconv.parse_uint(fullmove_clk) or_else 1
 	position.fullmove_clk = fullmove
 
-    occ := occupied(&position)
+    occ := occupied(position)
     gen_attack_mask(.White, &position, occ)
     gen_attack_mask(.Black, &position, occ)
 	position.hash = zobrist_hash(position)

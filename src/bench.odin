@@ -18,7 +18,7 @@ bench :: proc(depth: int = BENCH_DEPTH) {
 			fmt.eprintln("Failed to parse FEN:", fen)
 		}
 
-		data := default_data(position)
+		data := init_data(position)
 		data.max_depth = depth
 		total_nodes += root_search(&data)
 		delete(data.position.history)

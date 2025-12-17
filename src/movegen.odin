@@ -43,7 +43,7 @@ where intrinsics.type_is_numeric(T) {
 gen_pseudo_legal_moves :: proc(position: ^Position) -> (moves: [dynamic]Move) {
 	us := position.turn
 	them := toggle(us)
-    occ := occupied(position)
+    occ := occupied(position^)
     enemies := position.occupancy[them]
     piece_bitboards := position.pieces[us]
 	atk: u64
@@ -53,13 +53,13 @@ gen_pseudo_legal_moves :: proc(position: ^Position) -> (moves: [dynamic]Move) {
 		gen_castling(.White, position, occ, atk, &moves)
 		gen_en_passant(.White, position, &moves)
 		gen_pawn_captures(.White, position, &moves)
-		gen_pawn_pushes(.White, position, &moves)
+		gen_pawn_pushes(.White, position^, &moves)
 	} else {
 		atk = gen_attack_mask(.White, position, occ)
 		gen_castling(.Black, position, occ, atk, &moves)
 		gen_en_passant(.Black, position, &moves)
 		gen_pawn_captures(.Black, position, &moves)
-		gen_pawn_pushes(.Black, position, &moves)
+		gen_pawn_pushes(.Black, position^, &moves)
 	}
 
     for &bb, piece in piece_bitboards {
@@ -147,7 +147,7 @@ queen_moves :: proc(sq: int, occ: u64) -> u64 {
     return rank_attacks(sq, occ) | file_attacks(sq, occ) | diagonal_attacks(sq, occ) | antidiag_attacks(sq, occ)
 }
 
-gen_pawn_pushes :: proc($side: Colour, position: ^Position, moves: ^[dynamic]Move) {
+gen_pawn_pushes :: proc($side: Colour, position: Position, moves: ^[dynamic]Move) {
     forward :: 8 when side == .White else -8
 
     pawns := position.pieces[side][.Pawn]
@@ -306,7 +306,7 @@ gen_attack_mask :: proc($side: Colour, position: ^Position, occ: u64) -> (atk: u
     return
 }
 
-attackers_to :: proc(position: ^Position, sq: int) -> (attackers: [Colour]u64) {
+attackers_to :: proc(position: Position, sq: int) -> (attackers: [Colour]u64) {
 	bb := to_bitboard(sq)
 	occ := occupied(position)
 	pieces := position.pieces

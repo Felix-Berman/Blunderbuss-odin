@@ -46,10 +46,12 @@ BISHOP_TROPISM_W :: 2
 ROOK_TROPISM_W :: 3
 QUEEN_TROPISM_W :: 5
 
-ZONE_WEIGHT_QUEEN :: 4
-ZONE_WEIGHT_ROOK :: 2
-ZONE_WEIGHT_BISHOP :: 1
-ZONE_WEIGHT_KNIGHT :: 1
+ZONE_ATTACK_WEIGHT: [7]int = {0, 50, 75, 88, 94, 97, 99}
+
+ZONE_WEIGHT_QUEEN :: 80
+ZONE_WEIGHT_ROOK :: 40
+ZONE_WEIGHT_BISHOP :: 20
+ZONE_WEIGHT_KNIGHT :: 20
 
 EXPOSURE_WEIGHT :: 2
 SHIELD_WEIGHT :: 2
@@ -126,21 +128,13 @@ eval :: proc(position: ^Position) -> int {
 		king_danger[us] += tropism(king_sq, rook_bb, ROOK_TROPISM_D, ROOK_TROPISM_W)
 		king_danger[us] += tropism(king_sq, queen_bb, QUEEN_TROPISM_D, QUEEN_TROPISM_W)
 
-		king_zone := SQ_MASKS[king_sq].king_zone
-		knights_in_zone := count_bits(knight_bb & king_zone)
-		bishops_in_zone := count_bits(bishop_bb & king_zone)
-		rooks_in_zone := count_bits(rook_bb & king_zone)
-		queens_in_zone := count_bits(queen_bb & king_zone)
+		// piece attacks one squares that can be reached by king in 2 moves
+		// weighted on piece value and number of attackers
+		king_danger[us] += king_zone_attacks(them, position, king_sq)
 
 		// queen mobility from king_sq reveals exposed lines of attacks
 		exposure_bb := queen_moves(king_sq, pawns_us | pawns_them)
 		king_danger[us] += count_bits(exposure_bb) * EXPOSURE_WEIGHT
-
-		// attackers within 2 squares of king
-		king_danger[us] += int(knights_in_zone) * ZONE_WEIGHT_KNIGHT
-		king_danger[us] += int(bishops_in_zone) * ZONE_WEIGHT_BISHOP
-		king_danger[us] += int(rooks_in_zone) * ZONE_WEIGHT_ROOK
-		king_danger[us] += int(queens_in_zone) * ZONE_WEIGHT_QUEEN
 
 		// pawn shielding
 		shield: int
@@ -276,6 +270,59 @@ tropism :: proc(king_sq: int, bb: u64, cutoff, weight: int) -> (tropism: int) {
 		}
 	}
 	
+	return
+}
+
+king_zone_attacks :: proc(
+	them: Colour,
+	position: ^Position,
+	king_sq: int
+) -> (attack_val: int) {
+	king_zone := SQ_MASKS[king_sq].king_zone
+	piece_bitboard := position.pieces[them]
+	occ := occupied(position)
+	attackers_in_zone: int
+
+	for &bb, piece in piece_bitboard {
+		move_proc: proc(sq: int, occ: u64) -> u64
+		piece_weight: int
+
+		switch piece {
+			case .Pawn:
+				continue
+			case .Knight:
+				move_proc = knight_moves_sq
+				piece_weight = ZONE_WEIGHT_KNIGHT
+			case .Bishop:
+				move_proc = bishop_moves
+				piece_weight = ZONE_WEIGHT_BISHOP
+			case .Rook:
+				move_proc = rook_moves
+				piece_weight = ZONE_WEIGHT_ROOK
+			case .Queen:
+				move_proc = queen_moves
+				piece_weight = ZONE_WEIGHT_QUEEN
+			case .King:
+				continue
+		}
+
+		for bb > 0 {
+			from := pop_lsb(&bb)
+			to := move_proc(from, occ)
+			zone_attacks := to & king_zone
+
+			if zone_attacks != 0 {
+				attackers_in_zone += 1
+				attack_val += count_bits(zone_attacks) * piece_weight
+			}
+		}
+	}
+
+	if attackers_in_zone > 0 {
+		attackers_in_zone = builtin.max(attackers_in_zone, len(ZONE_ATTACK_WEIGHT))
+		attack_val *= ZONE_ATTACK_WEIGHT[attackers_in_zone - 1] / 100
+	}
+
 	return
 }
 

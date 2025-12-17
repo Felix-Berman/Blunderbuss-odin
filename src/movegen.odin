@@ -147,6 +147,18 @@ queen_moves :: proc(sq: int, occ: u64) -> u64 {
     return rank_attacks(sq, occ) | file_attacks(sq, occ) | diagonal_attacks(sq, occ) | antidiag_attacks(sq, occ)
 }
 
+single_pawn_attacks :: proc(sq: int, _: u64, side: Colour) -> u64 {
+	bb := to_bitboard(sq)
+
+	if side == .White {
+		bb = (bb << 9) &~ H_FILE | (bb << 7) &~ A_FILE
+	} else {
+		bb = (bb >> 7) &~ H_FILE | (bb >> 9) &~ A_FILE
+	}
+
+	return bb
+}
+
 gen_pawn_pushes :: proc($side: Colour, position: ^Position, moves: ^[dynamic]Move) {
     forward :: 8 when side == .White else -8
 

@@ -102,6 +102,10 @@ pop_lsb :: proc(bitboard: ^u64) -> int {
     return sq
 }
 
+count_bits :: proc(bitboard: u64) -> int {
+	return cast(int)intrinsics.count_ones(bitboard)
+}
+
 mirror_vertically :: proc(bitboard: u64) -> u64 {
     return intrinsics.byte_swap(bitboard)
 }

@@ -1,6 +1,5 @@
 package blunderbuss
 
-import "base:intrinsics"
 import "base:builtin"
 
 piece_value: [PieceType]int = {
@@ -52,8 +51,9 @@ ZONE_WEIGHT_ROOK :: 2
 ZONE_WEIGHT_BISHOP :: 1
 ZONE_WEIGHT_KNIGHT :: 1
 
+EXPOSURE_WEIGHT :: 2
 SHIELD_WEIGHT :: 2
-DANGER_WEIGHT_INV :: 8
+DANGER_WEIGHT_DIVISOR :: 8
 
 eval :: proc(position: ^Position) -> int {
 	mg_material: [Colour]int
@@ -127,10 +127,14 @@ eval :: proc(position: ^Position) -> int {
 		king_danger[us] += tropism(king_sq, queen_bb, QUEEN_TROPISM_D, QUEEN_TROPISM_W)
 
 		king_zone := SQ_MASKS[king_sq].king_zone
-		knights_in_zone := intrinsics.count_ones(knight_bb & king_zone)
-		bishops_in_zone := intrinsics.count_ones(bishop_bb & king_zone)
-		rooks_in_zone := intrinsics.count_ones(rook_bb & king_zone)
-		queens_in_zone := intrinsics.count_ones(queen_bb & king_zone)
+		knights_in_zone := count_bits(knight_bb & king_zone)
+		bishops_in_zone := count_bits(bishop_bb & king_zone)
+		rooks_in_zone := count_bits(rook_bb & king_zone)
+		queens_in_zone := count_bits(queen_bb & king_zone)
+
+		// queen mobility from king_sq reveals exposed lines of attacks
+		exposure_bb := queen_moves(king_sq, pawns_us | pawns_them)
+		king_danger[us] += count_bits(exposure_bb) * EXPOSURE_WEIGHT
 
 		// attackers within 2 squares of king
 		king_danger[us] += int(knights_in_zone) * ZONE_WEIGHT_KNIGHT
@@ -138,7 +142,7 @@ eval :: proc(position: ^Position) -> int {
 		king_danger[us] += int(rooks_in_zone) * ZONE_WEIGHT_ROOK
 		king_danger[us] += int(queens_in_zone) * ZONE_WEIGHT_QUEEN
 
-		// pawn_shielding
+		// pawn shielding
 		shield: int
 
 		king_file := SQ_MASKS[king_sq].file_mask
@@ -169,7 +173,7 @@ eval :: proc(position: ^Position) -> int {
 		}
 
 		// Danger to king scales nonlinearly
-		king_danger[us] = king_danger[us] * king_danger[us] / DANGER_WEIGHT_INV
+		king_danger[us] = king_danger[us] * king_danger[us] / DANGER_WEIGHT_DIVISOR
 	}
 
 	mg_eval += mg_pawn[us] - mg_pawn[them]

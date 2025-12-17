@@ -254,6 +254,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		delete(rejected_quiets)
 	}
 
+	found_pv := false
 	move_count := 0
 	for i in 0..<len(moves) {
 		move := pick_move(moves[i:], move_scores[i:])
@@ -270,7 +271,20 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		if is_in_check(us, &data.position) do continue
 		move_count += 1
 
-		eval := -negamax(-beta, -alpha, depth - 1, ply + 1, move, data)
+		eval: int
+		// principle variation search
+		// Search with full alpha beta window if we are yet to raise alpha.
+		// If a move raises alpha assume this is the best move and search the
+		// rest with a null window (alpha, alpha+1).
+		// If this assumption fails repeat with full alpha beta window
+		if !found_pv {
+			eval = -negamax(-beta, -alpha, depth - 1, ply + 1, move, data)
+		} else {
+			eval = -negamax(-alpha - 1, -alpha, depth - 1, ply + 1, move, data)
+			if eval >= alpha && eval < beta {
+				eval = -negamax(-beta, -alpha, depth - 1, ply + 1, move, data)
+			}
+		}
 
 		if data.aborted do return 0
 

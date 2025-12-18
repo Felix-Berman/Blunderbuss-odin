@@ -76,101 +76,114 @@ root_search :: proc(data: ^SearchData) -> int {
 	found_mate: bool
 	best_move: Move
 
-	zob_hash := data.position.hash
-	tt_entry := probe_ttable(t_table, zob_hash)
-	if tt_entry.hash == zob_hash {
-		best_move = tt_entry.best_move
-	}
-
 	alpha := MIN_EVAL
 	beta := MAX_EVAL
-	eval_type := EvalType.UpperBound
+	prev_eval: int
 
 	ply := 0
 	iterative_deepening:
-	for depth := 1; depth <= data.max_depth; depth += 1 {
+	for depth in 1..=data.max_depth {
 		if found_mate do break
-		best_eval := MIN_EVAL
 
-		move_scores := score_moves(moves[:], 0, best_move, data)
-		defer delete(move_scores)
+		upper_window := ASPIRATION_WINDOW
+		lower_window := ASPIRATION_WINDOW
+		
+		if depth != 1 {
+			alpha = prev_eval - lower_window
+			beta = prev_eval + upper_window
+		}
+		
+		aspiration_loop:
+		for {
+			best_eval := MIN_EVAL
 
-		data.pv_length = {}
-		move_count := 0
-		for i in 0..<len(moves) {
-			move := pick_move(moves[i:], move_scores[i:])
-			make_move(&data.position, move)
-			defer unmake_move(&data.position, move)
-			
-			// useful to see formatted move in debugger
-			when ODIN_DEBUG {
-				move_str := to_string(move)
-				defer delete(move_str)
+			move_scores := score_moves(moves[:], 0, best_move, data)
+			defer delete(move_scores)
+
+			data.pv_length = {}
+			move_count := 0
+			for i in 0..<len(moves) {
+				move := pick_move(moves[i:], move_scores[i:])
+				make_move(&data.position, move)
+				defer unmake_move(&data.position, move)
+				
+				// useful to see formatted move in debugger
+				when ODIN_DEBUG {
+					move_str := to_string(move)
+					defer delete(move_str)
+				}
+
+				if is_in_check(us, &data.position) do continue
+
+				move_count += 1
+				currmove := to_string(move, context.temp_allocator)
+				curr_info := fmt.tprintfln(
+					"info depth %d currmove %s currmovenumber %d",
+					depth, currmove, move_count
+				)
+
+				bufio.writer_write_string(&writer, curr_info)
+				if time.tick_since(data.start_time) > 3 * time.Second {
+					bufio.writer_flush(&writer)
+				}
+
+				eval := -negamax(-beta, -alpha, depth - 1, ply + 1, data)
+
+				if data.aborted do break iterative_deepening
+
+				if eval > best_eval {
+					update_pv(ply, move, data)
+					best_move, best_eval = move, eval
+				}
+			}
+			bufio.writer_reset(&writer, stdout)
+			free_all(context.temp_allocator)
+
+			eval_bound := ""
+			if best_eval >= beta {
+				upper_window *= 2
+				eval_bound = " lowerbound"
+			} else if best_eval <= alpha {
+				lower_window *= 2
+				eval_bound = " upperbound"
 			}
 
-			if is_in_check(us, &data.position) do continue
-
-			move_count += 1
-			currmove := to_string(move, context.temp_allocator)
-			curr_info := fmt.tprintfln("info depth %d currmove %s currmovenumber %d",
-				depth, currmove, move_count)
-
-			bufio.writer_write_string(&writer, curr_info)
-			if time.tick_since(data.start_time) > 3 * time.Second {
-				bufio.writer_flush(&writer)
+			eval_type: string
+			print_eval := best_eval
+			if best_eval > MATE_EVAL - depth {
+				ply_to_mate := MATE_EVAL - best_eval
+				print_eval = (ply_to_mate + 1) / 2
+				eval_type = "mate"
+				found_mate = true
+			} else if best_eval < -MATE_EVAL + depth {
+				ply_to_mate := MATE_EVAL + best_eval
+				print_eval = -ply_to_mate / 2
+				eval_type = "mate"
+				found_mate = true
+			} else {
+				eval_type = "cp"
 			}
 
-			eval := -negamax(-beta, -alpha, depth - 1, ply + 1, data)
+			elapsed := time.tick_since(data.start_time)
+			elapsed_ms := int(time.duration_milliseconds(elapsed))
+			nps := f64(data.nodes) / time.duration_seconds(elapsed)
+			len := data.pv_length[0]
+			pv_str := to_string(data.pv_table[0][:len], context.temp_allocator)
+			fmt.printfln(
+				"info depth %d seldepth %d nodes %d time %d nps %d " +
+				"hashfull %d score %s %d%s pv %s",
+				depth, data.seldepth, data.nodes, elapsed_ms, int(nps),
+				hashfull(t_table), eval_type, print_eval, eval_bound, pv_str
+			)
 
-			if data.aborted do break iterative_deepening
-
-			if eval > best_eval {
-				update_pv(ply, move, data)
-				best_move, best_eval = move, eval
+			// break out of aspiration if in window
+			if alpha < best_eval && best_eval < beta {
+				prev_eval = best_eval
+				break
 			}
+			alpha = prev_eval - lower_window
+			beta = prev_eval + upper_window
 		}
-		bufio.writer_reset(&writer, stdout)
-		free_all(context.temp_allocator)
-
-		if best_eval > beta {
-			beta += ASPIRATION_WINDOW
-			depth -= 1
-			continue
-		} else if best_eval < alpha {
-			alpha -= ASPIRATION_WINDOW
-			depth -= 1
-			continue
-		} else {
-			alpha = best_eval - ASPIRATION_WINDOW
-			beta = best_eval + ASPIRATION_WINDOW
-		}
-
-
-		eval_type: string
-		if best_eval > MATE_EVAL - depth {
-			ply_to_mate := MATE_EVAL - best_eval
-			best_eval = (ply_to_mate + 1) / 2
-			eval_type = "mate"
-			found_mate = true
-		} else if best_eval < -MATE_EVAL + depth {
-			ply_to_mate := MATE_EVAL + best_eval
-			best_eval = -ply_to_mate / 2
-			eval_type = "mate"
-			found_mate = true
-		} else {
-			eval_type = "cp"
-		}
-
-		elapsed := time.tick_since(data.start_time)
-		elapsed_ms := int(time.duration_milliseconds(elapsed))
-		nps := f64(data.nodes) / time.duration_seconds(elapsed)
-		len := data.pv_length[0]
-		pv_str := to_string(data.pv_table[0][:len], context.temp_allocator)
-		fmt.printfln(
-			"info depth %d seldepth %d nodes %d time %d nps %d hashfull %d score %s %d pv %s",
-			depth, data.seldepth, data.nodes, elapsed_ms, int(nps),
-			hashfull(t_table), eval_type, best_eval, pv_str
-		)
 	}
 
 	move_str := to_string(best_move)

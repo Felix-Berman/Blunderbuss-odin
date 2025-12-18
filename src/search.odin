@@ -14,6 +14,7 @@ MATE_EVAL :: 1_000_000
 MAX_DEPTH :: 64
 
 DELTA_MARGIN :: 200
+ASPIRATION_WINDOW :: 25
 
 SearchData :: struct {
 	position: Position,
@@ -81,9 +82,13 @@ root_search :: proc(data: ^SearchData) -> int {
 		best_move = tt_entry.best_move
 	}
 
+	alpha := MIN_EVAL
+	beta := MAX_EVAL
+	eval_type := EvalType.UpperBound
+
 	ply := 0
 	iterative_deepening:
-	for depth in 1..=data.max_depth {
+	for depth := 1; depth <= data.max_depth; depth += 1 {
 		if found_mate do break
 		best_eval := MIN_EVAL
 
@@ -115,7 +120,7 @@ root_search :: proc(data: ^SearchData) -> int {
 				bufio.writer_flush(&writer)
 			}
 
-			eval := -negamax(MIN_EVAL, MAX_EVAL, depth - 1, ply + 1, data)
+			eval := -negamax(-beta, -alpha, depth - 1, ply + 1, data)
 
 			if data.aborted do break iterative_deepening
 
@@ -126,6 +131,20 @@ root_search :: proc(data: ^SearchData) -> int {
 		}
 		bufio.writer_reset(&writer, stdout)
 		free_all(context.temp_allocator)
+
+		if best_eval > beta {
+			beta += ASPIRATION_WINDOW
+			depth -= 1
+			continue
+		} else if best_eval < alpha {
+			alpha -= ASPIRATION_WINDOW
+			depth -= 1
+			continue
+		} else {
+			alpha = best_eval - ASPIRATION_WINDOW
+			beta = best_eval + ASPIRATION_WINDOW
+		}
+
 
 		eval_type: string
 		if best_eval > MATE_EVAL - depth {

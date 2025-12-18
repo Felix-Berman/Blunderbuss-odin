@@ -10,7 +10,7 @@ CWD = Path(os.getcwd())
 ENGINE_DIR = CWD / 'versions'
 LOG_DIR = CWD / 'sprt_log'
 FASTCHESS_CMD = "fastchess" # adjust if not on PATH
-OPENING_BOOK = "Balsa_v110221.pgn"
+OPENING_BOOK = "openings-16ply-100k.pgn"
 
 description = "SPRT test automation for the Blunderbuss engine using fastchess.\
     By default it will compare the current worktree to the HEAD of main."

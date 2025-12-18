@@ -32,6 +32,11 @@ get_flags :: proc(move: Move) -> MoveFlagSet {
     return transmute(bit_set[MoveFlags; uint]) move.flags
 }
 
+is_dynamic :: proc(flags: MoveFlagSet) -> bool {
+	return flags & {.Capture, .Promotion} != QUIET
+}
+
+
 build_move :: proc(from, to: $T , flags: MoveFlagSet) -> (move: Move) 
 where intrinsics.type_is_numeric(T) {
     move.from = uint(from)

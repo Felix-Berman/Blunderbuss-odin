@@ -12,6 +12,7 @@ MAX_EVAL :: builtin.max(int)
 MIN_EVAL :: -MAX_EVAL
 MATE_EVAL :: 1_000_000
 MAX_DEPTH :: 64
+MAX_Q_DEPTH :: 6
 
 DELTA_MARGIN :: 200
 ASPIRATION_WINDOW :: 25
@@ -97,13 +98,13 @@ root_search :: proc(data: ^SearchData) -> int {
 		for {
 			best_eval := MIN_EVAL
 
-			move_scores := score_moves(moves[:], 0, best_move, data)
-			defer delete(move_scores)
+			sort_scores := score_moves(moves[:], 0, best_move, data)
+			defer delete(sort_scores)
 
 			data.pv_length = {}
 			move_count := 0
 			for i in 0..<len(moves) {
-				move := pick_move(moves[i:], move_scores[i:])
+				move := pick_move(moves[i:], sort_scores[i:])
 				make_move(&data.position, move)
 				defer unmake_move(&data.position, move)
 				
@@ -260,15 +261,15 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 
 	us := data.position.turn
 	moves := gen_pseudo_legal_moves(&data.position)
-	move_scores := score_moves(moves[:], ply, best_move, data)
+	sort_scores := score_moves(moves[:], ply, best_move, data)
 	defer {
 		delete(moves)
-		delete(move_scores)
+		delete(sort_scores)
 	}
 
 	move_count := 0
 	for i in 0..<len(moves) {
-		move := pick_move(moves[i:], move_scores[i:])
+		move := pick_move(moves[i:], sort_scores[i:])
 		make_move(&data.position, move)
 		defer unmake_move(&data.position, move)
 
@@ -354,39 +355,57 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 	}
 
 	data.nodes += 1
-	data.pv_length[ply] = 0
-
 	if ply >= MAX_DEPTH {
 		return eval(&data.position)
 	}
 
-	alpha := alpha
-	best_eval := eval(&data.position)
-	best_move: Move
-	move_count := 0
 	if ply > data.seldepth {
 		data.seldepth = ply
 	}
 
-	if best_eval >= beta {
-		return best_eval
-	}
-	if best_eval > alpha {
-		alpha = best_eval
-	}
+	data.pv_length[ply] = 0
 
 	us := data.position.turn
-	moves := gen_pseudo_legal_moves(&data.position)
-	move_scores := score_moves(moves[:], ply, best_move, data)
-	defer {
-		delete(moves)
-		delete(move_scores)
+	them := toggle(us)
+	in_check := is_in_check(us, &data.position)
+	alpha := alpha
+	standing_pat := eval(&data.position)
+	best_move: Move
+
+	if !in_check {
+		if standing_pat >= beta {
+			return standing_pat
+		}
+		if standing_pat > alpha {
+			alpha = standing_pat
+		}
+
+		big_delta := piece_value[.Queen]
+
+		may_promote: u64 = RANK_7 if us == .White else RANK_2
+		if may_promote & data.position.pieces[us][.Pawn] != 0 {
+			big_delta += piece_value[.Queen] - piece_value[.Pawn]
+		}
+
+		// exit early if it's very unlikely for any move to improve alpha
+		if standing_pat + big_delta < alpha {
+			return standing_pat
+		}
 	}
 
+	moves := gen_pseudo_legal_moves(&data.position)
+	sort_scores := score_moves(moves[:], ply, best_move, data)
+	defer {
+		delete(moves)
+		delete(sort_scores)
+	}
+
+	best_eval := standing_pat
+	move_count := 0
 	for i in 0..<len(moves) {
-		move := pick_move(moves[i:], move_scores[i:])
+		move := pick_move(moves[i:], sort_scores[i:])
 		flags := get_flags(move)
-		if .Capture not_in flags do continue
+		if !in_check && !is_dynamic(flags) do continue
 
 		when ODIN_DEBUG {
 			// useful to see formatted move in debugger
@@ -404,8 +423,41 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 			}
 		}
 
-		// static exchange evaluation (don't consider trades losing material)
-		if see(&data.position, move) < 0 do continue
+		// delta pruning
+		if !in_check && .Capture in flags {
+			captured_val: int
+			if flags == EP_CAPTURE {
+				captured_val = piece_value[.Pawn]
+			} else if .Capture in flags {
+				captured_piece, ok := piece_on(&data.position, move.to)
+				assert(ok, "no piece on captured square")
+				captured_val = piece_value[captured_piece.type]
+			}
+
+			if .Promotion in flags {
+				switch flags &~ {.Capture} {
+				case KNIGHT_PROMOTION:
+					captured_val += piece_value[.Knight]
+				case BISHOP_PROMOTION:
+					captured_val += piece_value[.Bishop]
+				case ROOK_PROMOTION:
+					captured_val += piece_value[.Rook]
+				case QUEEN_PROMOTION:
+					captured_val += piece_value[.Queen]
+				}
+				captured_val -= piece_value[.Pawn]
+			}
+			
+			if standing_pat + captured_val + DELTA_MARGIN < alpha {
+				continue
+			}
+
+			// static exchange evaluation (don't consider trades losing material)
+			// see value already computed during sort scoring
+			if .Promotion not_in flags && sort_scores[i] < 0 {
+				continue
+			}
+		}
 
 		make_move(&data.position, move)
 		defer unmake_move(&data.position, move)
@@ -429,6 +481,10 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 				update_pv(ply, move, data)
 			}
 		}
+	}
+
+	if in_check && move_count == 0 {
+		return -MATE_EVAL + ply
 	}
 
 	return best_eval
@@ -468,7 +524,12 @@ score_moves :: proc(movelist: []Move, ply: int, best_move: Move, data: ^SearchDa
 
 		flags := get_flags(move)
 		if .Capture in flags {
-			scores[i] += 10_000 + see(&data.position, move)
+			see_val := see(&data.position, move)
+			scores[i] += see_val
+			
+			if see_val >= 0 {
+				scores[i] += 10_000
+			}
 		} else {
 			for killer in data.killer_moves[ply] {
 				if move == killer {
@@ -494,6 +555,10 @@ pick_move :: proc(movelist: []Move, scores: []int) -> Move {
 		move_temp := movelist[0]
 		movelist[0] = movelist[best_i]
 		movelist[best_i] = move_temp
+
+		score_temp := scores[0]
+		scores[0] = scores[best_i]
+		scores[best_i] = score_temp
 	}
 
 	return movelist[0]

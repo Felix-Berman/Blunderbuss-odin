@@ -34,6 +34,7 @@ Position :: struct {
     turn: Colour,
     castling: bit_set[Castling],
     ep_sq: int,
+	can_ep: bool,
     halfmove_clk: uint,
 	fullmove_clk: uint,
     ply: int,

@@ -486,17 +486,17 @@ pick_move :: proc(movelist: []Move, scores: []int) -> Move {
 	return movelist[0]
 }
 
-threefold_repetition :: proc(info: ^SearchData, search_ply: int) -> bool {
-	ply_to_search := info.position.ply - info.position.last_irreversible_ply
+threefold_repetition :: proc(data: ^SearchData, search_ply: int) -> bool {
+	ply_to_search := data.position.ply - data.position.last_irreversible_ply
 
 	if ply_to_search < 4 {
 		return false
 	}
 
-	history_len := len(info.position.history)
+	history_len := len(data.position.history)
 	repetition_count: int
 	for i: int = 4; i <= ply_to_search; i += 2 {
-		if info.position.history[history_len - i].hash == info.position.hash {	
+		if data.position.history[history_len - i].hash == data.position.hash {
 			if search_ply > 2 do return true
 			repetition_count += 1
 			if repetition_count == 2 do return true	

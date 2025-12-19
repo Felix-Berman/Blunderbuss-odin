@@ -246,15 +246,19 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 			case .Exact:
 				return tt_eval
 			case .LowerBound:
-				// if tt_eval >= beta {
-				// 	return tt_eval
-				// }
-				// alpha = builtin.max(alpha, tt_eval)
+				if tt_eval >= beta {
+					return tt_eval
+				}
+				alpha = builtin.max(alpha, tt_eval)
 			case .UpperBound:
-				// if tt_eval <= alpha {
-				// 	return tt_eval
-				// }
-				// beta = builtin.min(beta, tt_eval)
+				if tt_eval <= alpha {
+					return tt_eval
+				}
+				beta = builtin.min(beta, tt_eval)
+			}
+
+			if alpha >= beta {
+				return alpha
 			}
 		}
 	}
@@ -266,6 +270,8 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		delete(moves)
 		delete(sort_scores)
 	}
+
+	is_pv := beta - alpha > 1 // otherwise we're in a null window
 
 	move_count := 0
 	for i in 0..<len(moves) {
@@ -282,27 +288,30 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		if is_in_check(us, &data.position) do continue
 		move_count += 1
 
-		eval := -negamax(-beta, -alpha, depth - 1, ply + 1, data)
+		eval: int
+		if move_count == 1 {
+			eval = -negamax(-beta, -alpha, depth - 1, ply + 1, data)
+		} else {
+			eval = -negamax(-alpha - 1, -alpha, depth - 1, ply + 1, data)
+			if eval > alpha && eval < beta && is_pv {
+				eval = -negamax(-beta, -alpha, depth - 1, ply + 1, data)
+			}
+		}
 
 		if data.aborted do return 0
 
-		if eval >= beta {
-			if QUIET == get_flags(move) {
-				store_killer(move, ply, data)
-			}
-			ttable_insert(&t_table, TTableEntry{
-				data.position.hash,
-				depth,
-				eval,
-				.LowerBound,
-				move,
-			})
-			return eval
-		}
 		
 		if eval > best_eval {
 			best_eval = eval
 			best_move = move
+
+			if eval >= beta {
+				if QUIET == get_flags(move) {
+					store_killer(move, ply, data)
+				}
+				eval_type = .LowerBound
+				break
+			}
 
 			if eval > alpha {
 				alpha = eval

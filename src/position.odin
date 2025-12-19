@@ -45,6 +45,7 @@ Position :: struct {
 
 HistoryData :: struct {
 	ep_sq: int,
+	can_ep: bool,
 	captured_piece: Maybe(Piece),
 	castling_rights: bit_set[Castling],
 	halfmove_clk: uint,

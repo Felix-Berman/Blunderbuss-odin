@@ -15,8 +15,9 @@ make_move :: proc(position: ^Position, move: Move) {
 	position.ply += 1
 
 	// store position features that cannot be recovered after making move
-	irreversibles := HistoryData{
+	irreversibles := HistoryData {
 		position.ep_sq,
+		position.can_ep,
 		nil,
 		position.castling,
 		position.halfmove_clk,
@@ -65,17 +66,17 @@ make_move :: proc(position: ^Position, move: Move) {
 	}
 
 	if position.ep_sq < 64 {
-		position.ep_sq = 64
 		if position.can_ep {
 			position.hash ~= ZOBRIST_RANDS[EP_OFFSET + position.ep_sq % 8]
 			position.can_ep = false
 			position.last_irreversible_ply = position.ply
 		}
+		position.ep_sq = 64
 	}
 
 	if flags == DOUBLE_PUSH {
 		position.ep_sq = int(move.from) + forward
-		possible_capturers := ((to_bb << 1) &~ H_FILE) | ((to_bb >> 1) &~ A_FILE)
+		possible_capturers := (to_bb << 1) &~ H_FILE | (to_bb >> 1) &~ A_FILE
 		if possible_capturers & position.pieces[them][.Pawn] != 0 {
 			position.hash ~= ZOBRIST_RANDS[EP_OFFSET + position.ep_sq % 8]
 			position.can_ep = true
@@ -162,7 +163,7 @@ make_move :: proc(position: ^Position, move: Move) {
 		hash := zobrist_hash(position^)
 		if position.hash != hash {
 			fmt.println("Discrepancy between generated and updated hash")
-			fmt.println(move)
+			fmt.println(move_str)
 			display(position^)
 
 			for rand, i in ZOBRIST_RANDS {
@@ -182,6 +183,7 @@ unmake_move :: proc(position: ^Position, move: Move) {
 
 	history := pop(&position.history)
 	position.ep_sq = history.ep_sq
+	position.can_ep = history.can_ep
 	position.castling = history.castling_rights
 	position.halfmove_clk = history.halfmove_clk
 	position.hash = history.hash
@@ -252,4 +254,3 @@ make_move_str :: proc(position: ^Position, str: string) -> (ok: bool) {
 
 	return
 }
-

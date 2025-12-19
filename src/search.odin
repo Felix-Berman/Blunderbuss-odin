@@ -421,14 +421,16 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 			move_str := to_string(move)
 			defer delete(move_str)
 
-			// validate static exchange accuracy
-			see_val := see(&data.position, move)
-			recursive_see_val := recursive_see_root(&data.position, move)
-			if see_val != recursive_see_val {
-				display(data.position)
-				fmt.println(to_string(move, context.temp_allocator))
-				fmt.println(see_val, "!=", recursive_see_val)
-				panic("static exchange evaluation error")
+			if .Capture in flags {
+				// validate static exchange accuracy
+				see_val := see(&data.position, move)
+				recursive_see_val := recursive_see_root(&data.position, move)
+				if see_val != recursive_see_val {
+					display(data.position)
+					fmt.println(to_string(move, context.temp_allocator))
+					fmt.println(see_val, "!=", recursive_see_val)
+					panic("static exchange evaluation error")
+				}
 			}
 		}
 
@@ -617,8 +619,10 @@ see :: proc(position: ^Position, move: Move) -> int {
 	attackers := attackers_to(position, to)
 	attacker, ok := piece_on(position, move.from)
 	assert(ok, "Attempt to move from empty square")
-	assert(attackers[us] & to_bitboard(move.from) != 0, 
-		"Initial attacker not included in see attack set")
+	assert(
+		attackers[us] & to_bitboard(move.from) != 0,
+		"Initial attacker not included in see attack set"
+	)
 
 	victim_type = attacker.type
 	occ &~= to_bitboard(move.from)
@@ -665,12 +669,10 @@ see :: proc(position: ^Position, move: Move) -> int {
 			}
 		}
 
-		if no_attackers {
-			display(position^)
-			display(att)
-			fmt.println(to_string(move, context.temp_allocator))
-			panic("Misalignment between piece bbs and att bb in see")
-		}
+		assert(
+			!no_attackers,
+			"Misalignment between piece bbs and att bb in see"
+		)
 
 		victim_type = next_attacker
 		occ &~= to_bitboard(next_sq)

@@ -10,7 +10,6 @@ TTable :: struct {
 	hashfull: int,
 }
 
-t_table: TTable
 
 EvalType :: enum{Exact, UpperBound, LowerBound}
 
@@ -29,7 +28,6 @@ get_ttable_len :: proc(hash_size_mb: int) -> int {
 make_ttable :: proc(hash_size_mb: int = DEFAULT_HASH_SIZE_MB) -> TTable {
 	len := get_ttable_len(hash_size_mb)
 	entries := make([dynamic]TTableEntry, len)
-	reserve(&entries, len)
 	return TTable{entries, 0}
 }
 
@@ -37,7 +35,7 @@ resize_ttable :: proc(t_table: ^TTable, hash_size_mb: int) {
 	len := get_ttable_len(hash_size_mb)
 	err := resize(&t_table.entries, len)
 	if err != .None {
-		fmt.eprintln("Error:", err)
+		fmt.eprintln("Error resizing transposition table:", err)
 	}
 }
 

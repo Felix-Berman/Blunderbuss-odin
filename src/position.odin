@@ -20,6 +20,8 @@ Piece :: bit_field u8 {
 	type: PieceType | 3,
 }
 
+NIL_PIECE := transmute(Piece)~u8(0)
+
 make_piece :: proc(colour: Colour, type: PieceType) -> Piece {
 	return {
 		type = type,

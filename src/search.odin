@@ -19,6 +19,17 @@ DELTA_MARGIN :: 200
 ASPIRATION_WINDOW :: 25
 NULL_MOVE_REDUCTION :: 3
 
+TT_MOVE_SCORE :: 100_000
+CAPTURE_SCORE :: 50_000
+KILLER_SCORE :: 600
+MAX_HISTORY :: 20_000
+HISTORY_BONUS :: 400
+PROMOTION_SCORE :: 800
+
+// global tables
+t_table: TTable
+continuation_history: [PieceType][64][64][64]int
+
 SearchData :: struct {
 	position: Position,
 	max_depth: int,
@@ -35,7 +46,7 @@ SearchData :: struct {
 	killer_moves: [MAX_DEPTH][2]Move,
 }
 
-default_data :: proc(position: Position) -> (data: SearchData) {
+init_data :: proc(position: Position) -> (data: SearchData) {
 	data.position = position
 	data.max_depth = MAX_DEPTH
 	data.max_nodes = builtin.max(int)
@@ -56,12 +67,16 @@ default_data :: proc(position: Position) -> (data: SearchData) {
 	return
 }
 
+deinit_data :: proc(data: ^SearchData) {
+	delete(data.position.history)
+	free(data)
+}
+
 search_thread :: proc(data: rawptr) {
 	data := cast(^SearchData)data
 	root_search(data)
 
-	delete(data.position.history)
-	free(data)
+	deinit_data(data)
 }
 
 root_search :: proc(data: ^SearchData) -> int {
@@ -101,7 +116,9 @@ root_search :: proc(data: ^SearchData) -> int {
 		for {
 			best_eval := MIN_EVAL
 
-			sort_scores := score_moves(moves[:], 0, best_move, data)
+			sort_scores := score_moves(
+				moves[:], 0, best_move, NULL_MOVE, NIL_PIECE, data
+			)
 			defer delete(sort_scores)
 
 			data.pv_length = {}
@@ -129,7 +146,7 @@ root_search :: proc(data: ^SearchData) -> int {
 				}
 
 				make_move(&data.position, move)
-				eval := -negamax(-beta, -alpha, depth - 1, ply + 1, data)
+				eval := -negamax(-beta, -alpha, depth - 1, ply + 1, NULL_MOVE, data)
 				unmake_move(&data.position, move)
 
 				if data.aborted do break iterative_deepening
@@ -202,7 +219,7 @@ root_search :: proc(data: ^SearchData) -> int {
 	return data.nodes
 }
 
-negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
+negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData) -> int {
 	if data.nodes % 2048 == 0 {
 		if !data.infinite && time.tick_since(data.start_time) >= data.allowed_time {
 			data.aborted = true
@@ -226,7 +243,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 	}
 
 	if depth == 0 {
-		return q_search(alpha, beta, ply, data)
+		return q_search(alpha, beta, ply, prev_move, data)
 	}
 
 	alpha := alpha
@@ -235,6 +252,13 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 	best_eval := MIN_EVAL
 	best_move := NULL_MOVE
 	eval_type := EvalType.UpperBound
+
+	prev_piece := NIL_PIECE
+	if prev_move != NULL_MOVE {
+		ok: bool
+		prev_piece, ok = piece_on(&data.position, prev_move.to)
+		assert(ok, "No piece found at previous move.to")
+	}
 
 	zob_hash := data.position.hash
 	tt_entry := probe_ttable(t_table, zob_hash)
@@ -273,10 +297,12 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 	us := data.position.turn
 	masks := gen_legality_masks(&data.position)
 	moves := gen_moves(&data.position, masks)
-	sort_scores := score_moves(moves[:], ply, best_move, data)
+	sort_scores := score_moves(moves[:], ply, best_move, prev_move, prev_piece, data)
+	rejected_quiets := make([dynamic]Move, 0, len(moves))
 	defer {
 		delete(moves)
 		delete(sort_scores)
+		delete(rejected_quiets)
 	}
 
 	if !is_in_check(&data.position, masks.danger) && !is_pawn_endgame(data.position) {
@@ -284,7 +310,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 
 		if null_depth >= 0 {
 			make_null_move(&data.position)
-			eval := -negamax(-beta, -beta + 1, null_depth, ply + 1, data)
+			eval := -negamax(-beta, -beta + 1, null_depth, ply + 1, NULL_MOVE, data)
 			unmake_null_move(&data.position)
 
 			if eval >= beta {
@@ -325,11 +351,11 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		make_move(&data.position, move)
 		eval: int
 		if move_count == 1 {
-			eval = -negamax(-beta, -alpha, depth - 1, ply + 1, data)
+			eval = -negamax(-beta, -alpha, depth - 1, ply + 1, move, data)
 		} else {
-			eval = -negamax(-alpha - 1, -alpha, depth - r - 1, ply + 1, data)
+			eval = -negamax(-alpha - 1, -alpha, depth - r - 1, ply + 1, move, data)
 			if eval > alpha && eval < beta && is_pv {
-				eval = -negamax(-beta, -alpha, depth - 1, ply + 1, data)
+				eval = -negamax(-beta, -alpha, depth - 1, ply + 1, move, data)
 			}
 		}
 		unmake_move(&data.position, move)
@@ -343,6 +369,13 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 			if eval >= beta {
 				if !is_dynamic(flags) {
 					store_killer(move, ply, data)
+					bonus := min(depth*depth, HISTORY_BONUS)
+					update_history(prev_piece, prev_move, move, depth*depth)
+
+					// history maluses
+					for move in rejected_quiets {
+						update_history(prev_piece, prev_move, move, -bonus/2)
+					}
 				}
 				eval_type = .LowerBound
 				break
@@ -353,6 +386,10 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 				update_pv(ply, move, data)
 				eval_type = .Exact
 			}
+		}
+
+		if flags & {.Capture, .Promotion} == QUIET {
+			append(&rejected_quiets, move)
 		}
 	}
 
@@ -382,7 +419,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 	return best_eval
 }
 
-q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
+q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> int {
 	if data.nodes % 2048 == 0 {
 		if !data.infinite && time.tick_since(data.start_time) >= data.allowed_time {
 			data.aborted = true
@@ -417,6 +454,13 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 	standing_pat := eval(&data.position)
 	best_move: Move
 
+	prev_piece := NIL_PIECE
+	if prev_move != NULL_MOVE {
+		ok: bool
+		prev_piece, ok = piece_on(&data.position, prev_move.to)
+		assert(ok, "No piece found at previous move.to")
+	}
+
 	if !in_check {
 		if standing_pat >= beta {
 			return standing_pat
@@ -439,7 +483,10 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 	}
 
 	moves := gen_moves(&data.position, masks)
-	sort_scores := score_moves(moves[:], ply, best_move, data)
+	sort_scores := score_moves(
+		moves[:], ply, best_move, prev_move, prev_piece, data
+	)
+
 	defer {
 		delete(moves)
 		delete(sort_scores)
@@ -509,7 +556,7 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 		}
 
 		make_move(&data.position, move)
-		eval := -q_search(-beta, -alpha, ply + 1, data)
+		eval := -q_search(-beta, -alpha, ply + 1, move, data)
 		unmake_move(&data.position, move)
 
 		if data.aborted do return 0
@@ -555,36 +602,76 @@ update_pv :: proc(ply: int, move: Move, data: ^SearchData) {
 //	TT move
 //	positive trades/captures
 //	equal trades
+//	promotions
 //	killer moves
+//	continuation history
 //	negative trades/captures
-//	remaining moves
-score_moves :: proc(movelist: []Move, ply: int, best_move: Move, data: ^SearchData) -> (scores: [dynamic]int) {
-	resize(&scores, len(movelist))
+score_moves :: proc(
+	movelist: []Move,
+	ply: int,
+	best_move, prev_move: Move,
+	prev_piece: Piece,
+	data: ^SearchData
+) -> []int {
+
+	scores := make([]int, len(movelist))
+
+	move_loop:
 	for move, i in movelist {
 		if move == NULL_MOVE do break
+
 		if move == best_move {
-			scores[i] = 100_000
+			scores[i] = TT_MOVE_SCORE
 			continue
 		}
 
 		flags := get_flags(move)
+
+		if .Promotion in flags {
+			switch flags &~ {.Capture} {
+			case KNIGHT_PROMOTION:
+				scores[i] += piece_value[.Knight]
+			case BISHOP_PROMOTION:
+				scores[i] += piece_value[.Bishop]
+			case ROOK_PROMOTION:
+				scores[i] += piece_value[.Rook]
+			case QUEEN_PROMOTION:
+				scores[i] += piece_value[.Queen]
+			}
+
+			scores[i] -= piece_value[.Pawn]
+		}
+
 		if .Capture in flags {
 			see_val := see(&data.position, move)
 			scores[i] += see_val
-			
+
 			if see_val >= 0 {
-				scores[i] += 10_000
+				scores[i] += CAPTURE_SCORE
+			} else {
+				scores[i] -= CAPTURE_SCORE
 			}
-		} else {
-			for killer in data.killer_moves[ply] {
-				if move == killer {
-					scores[i] += 9_900
-				}
+
+			continue
+		}
+
+		if is_dynamic(flags) {
+			continue
+		}
+
+		if prev_move != NULL_MOVE {
+			scores[i] += continuation_history[prev_piece.type][prev_move.to][move.from][move.to]
+		}
+
+		for killer in data.killer_moves[ply] {
+			if move == killer {
+				scores[i] = builtin.max(scores[i], KILLER_SCORE)
 			}
 		}
+
 	}
 
-	return
+	return scores
 }
 
 pick_move :: proc(movelist: []Move, scores: []int) -> Move {
@@ -796,3 +883,14 @@ store_killer :: proc(move: Move, ply: int, data: ^SearchData) {
 		data.killer_moves[ply][0] = move
 	}
 }
+
+update_history :: proc(prev_piece: Piece, prev_move, move: Move, bonus: int) {
+	if prev_move == NULL_MOVE do return
+
+	bonus := bonus
+	history := &continuation_history[prev_piece.type][prev_move.to][move.from][move.to]
+
+	// history gravity:
+	// entries with higher scores recieve a smaller fraction of bonus
+	history^ += bonus - builtin.abs(bonus) * history^ / MAX_HISTORY
+}	

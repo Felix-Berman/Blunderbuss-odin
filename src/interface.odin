@@ -55,6 +55,7 @@ uci_loop :: proc() {
 		case "ucinewgame":
 			delete(position.history)
 			position = starting_position()
+			continuation_history = {}
 		case "position":
 			if new_position, ok := parse_position(&line); ok {
 				delete(position.history)
@@ -91,7 +92,6 @@ uci_loop :: proc() {
 set_option :: proc(line: ^string) {
 	for cmd in strings.split_iterator(line, " ") {
 		if strings.equal_fold(cmd, "hash") {
-			fmt.println("setting hash")
 			if val_str, ok := strings.split_iterator(line, " "); ok {
 				size := get_next_int(line) or_break
 				resize_ttable(&t_table, size)
@@ -102,6 +102,7 @@ set_option :: proc(line: ^string) {
 			cmd2 := strings.split_iterator(line, " ") or_break
 			if strings.equal_fold(cmd2, "hash") {
 				clear_ttable(&t_table)
+				continuation_history = {}
 			}
 		}
 	}
@@ -126,7 +127,7 @@ parse_position :: proc(line: ^string) -> (position: Position, ok: bool) {
 
 go :: proc(line: ^string, position: ^Position) -> bool {
 	data := new(SearchData, runtime.default_allocator())
-	data^ = default_data(position^)
+	data^ = init_data(position^)
 	side_time, wtime, btime, side_inc, winc, binc, movetime: int
 	movestogo := 40
 

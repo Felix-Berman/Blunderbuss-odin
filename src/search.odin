@@ -1,5 +1,6 @@
 package blunderbuss
 
+import "core:math"
 import "core:mem"
 import "core:fmt"
 import "core:time"
@@ -226,6 +227,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 
 	alpha := alpha
 	beta := beta
+	depth := depth
 	best_eval := MIN_EVAL
 	best_move := NULL_MOVE
 	eval_type := EvalType.UpperBound
@@ -298,6 +300,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 	move_count := 0
 	for i in 0..<len(moves) {
 		move := pick_move(moves[i:], sort_scores[i:])
+		flags := get_flags(move)
 		make_move(&data.position, move)
 		defer unmake_move(&data.position, move)
 
@@ -310,11 +313,18 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 		if is_in_check(us, &data.position) do continue
 		move_count += 1
 
+		r := 0
+		if !is_pv && depth > 2 && move_count > 2 {
+			r = cast(int)math.floor(math.ln(f32(depth)) * math.ln(f32(move_count)))
+			r = builtin.max(r, 1)
+			r = builtin.min(r, depth - 2)
+		}
+
 		eval: int
 		if move_count == 1 {
 			eval = -negamax(-beta, -alpha, depth - 1, ply + 1, data)
 		} else {
-			eval = -negamax(-alpha - 1, -alpha, depth - 1, ply + 1, data)
+			eval = -negamax(-alpha - 1, -alpha, depth - r - 1, ply + 1, data)
 			if eval > alpha && eval < beta && is_pv {
 				eval = -negamax(-beta, -alpha, depth - 1, ply + 1, data)
 			}
@@ -328,7 +338,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 			best_move = move
 
 			if eval >= beta {
-				if QUIET == get_flags(move) {
+				if !is_dynamic(flags) {
 					store_killer(move, ply, data)
 				}
 				eval_type = .LowerBound

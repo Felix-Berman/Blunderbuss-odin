@@ -259,7 +259,6 @@ make_null_move :: proc(position: ^Position) {
 	us := position.turn
 	them := toggle(us)
 	position.ply += 1
-	position.last_irreversible_ply = position.ply // repetitions break at null
 
 	// store position features that cannot be recovered after making move
 	irreversibles := HistoryData{
@@ -271,6 +270,8 @@ make_null_move :: proc(position: ^Position) {
 		position.hash,
 		position.last_irreversible_ply,
 	}
+
+	position.last_irreversible_ply = position.ply // repetitions break at null
 
 	if position.ep_sq < 64 {
 		if position.can_ep {

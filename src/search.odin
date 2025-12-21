@@ -16,6 +16,7 @@ MAX_Q_DEPTH :: 6
 
 DELTA_MARGIN :: 200
 ASPIRATION_WINDOW :: 25
+NULL_MOVE_REDUCTION :: 3
 
 SearchData :: struct {
 	position: Position,
@@ -269,6 +270,27 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 	defer {
 		delete(moves)
 		delete(sort_scores)
+	}
+
+	if !is_in_check(us, &data.position) && !is_pawn_endgame(data.position) {
+		null_depth := depth - NULL_MOVE_REDUCTION - 1
+
+		if null_depth >= 0 {
+			make_null_move(&data.position)
+			eval := -negamax(-beta, -beta + 1, null_depth, ply + 1, data)
+			unmake_null_move(&data.position)
+
+			if eval >= beta {
+				ttable_insert(&t_table, TTableEntry{
+					data.position.hash,
+					null_depth,
+					eval,
+					.LowerBound,
+					NULL_MOVE,
+				})
+				return eval
+			}
+		}
 	}
 
 	is_pv := beta - alpha > 1 // otherwise we're in a null window

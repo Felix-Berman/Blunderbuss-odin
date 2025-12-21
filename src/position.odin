@@ -188,3 +188,20 @@ parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {
 
 	return position, true
 }
+
+is_pawn_endgame :: proc(position: Position) -> bool {
+	pieces: u64
+
+	for side in position.pieces {
+		for bb, piece in side {
+			if piece == .Pawn || piece == .King {
+				continue
+			}
+			
+			pieces |= bb
+		}
+	}
+
+	return pieces == 0
+}
+

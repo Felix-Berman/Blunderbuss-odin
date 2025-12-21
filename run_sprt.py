@@ -58,7 +58,7 @@ def main():
         "-engine", f"name={feature_name}", f"cmd={path_feature}",
         "-engine", f"name={base_name}", f"cmd={path_base}",
         "-each", f"tc=10+0.1",
-        "-sprt", f"elo0=0 elo1=5 alpha=0.05 beta=0.05",
+        "-sprt", f"elo0=0 elo1=10 alpha=0.05 beta=0.05",
         "-rounds", "4000",
         "-games", "2", # Play pairs (white/black)
         "-concurrency", "8",

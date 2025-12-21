@@ -254,3 +254,70 @@ make_move_str :: proc(position: ^Position, str: string) -> (ok: bool) {
 
 	return
 }
+
+make_null_move :: proc(position: ^Position) {
+	us := position.turn
+	them := toggle(us)
+	position.ply += 1
+	position.last_irreversible_ply = position.ply // repetitions break at null
+
+	// store position features that cannot be recovered after making move
+	irreversibles := HistoryData{
+		position.ep_sq,
+		position.can_ep,
+		nil,
+		position.castling,
+		position.halfmove_clk,
+		position.hash,
+		position.last_irreversible_ply,
+	}
+
+	if position.ep_sq < 64 {
+		if position.can_ep {
+			position.hash ~= ZOBRIST_RANDS[EP_OFFSET + position.ep_sq % 8]
+			position.can_ep = false
+		}
+		position.ep_sq = 64
+	}
+
+	append(&position.history, irreversibles)
+	position.turn = them
+	position.hash ~= ZOBRIST_RANDS[TURN_OFFSET]
+	if us == .Black {
+		position.fullmove_clk += 1
+	}
+	
+	when ODIN_DEBUG {
+		hash := zobrist_hash(position^)
+		if position.hash != hash {
+			fmt.println("Discrepancy between generated and updated hash")
+			display(position^)
+
+			for rand, i in ZOBRIST_RANDS {
+				if hash ~ rand == position.hash {
+					fmt.println("Error corrected by zobrist index:", i)
+				}
+			}
+			assert(false)
+		}
+	}
+}
+
+unmake_null_move :: proc(position: ^Position) {
+	them := position.turn
+	us := toggle(them)
+
+	history := pop(&position.history)
+	position.ep_sq = history.ep_sq
+	position.can_ep = history.can_ep
+	position.castling = history.castling_rights
+	position.halfmove_clk = history.halfmove_clk
+	position.hash = history.hash
+	position.last_irreversible_ply = history.last_irreversible_ply
+
+	position.turn = us
+	position.ply -= 1
+	if us == .Black {
+		position.fullmove_clk -= 1
+	}
+}

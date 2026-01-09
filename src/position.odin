@@ -30,10 +30,10 @@ make_piece :: proc(colour: Colour, type: PieceType) -> Piece {
 Position :: struct {
 	pieces: [Colour][PieceType]u64,
 	occupancy: [Colour]u64,
-	atk_masks: [Colour]u64,
 	turn: Colour,
 	castling: bit_set[Castling],
 	ep_sq: int,
+	ep_target: int,
 	can_ep: bool,
 	halfmove_clk: uint,
 	fullmove_clk: uint,
@@ -45,6 +45,7 @@ Position :: struct {
 
 HistoryData :: struct {
 	ep_sq: int,
+	ep_target: int,
 	can_ep: bool,
 	captured_piece: Maybe(Piece),
 	castling_rights: bit_set[Castling],
@@ -74,8 +75,6 @@ starting_position :: proc() -> (position: Position) {
 	position.halfmove_clk = 0
 	position.ply = 0
 
-	gen_attack_mask(.White, &position, occupied(&position))
-	gen_attack_mask(.Black, &position, occupied(&position))
 	position.hash = zobrist_hash(position)
 
 	return
@@ -94,7 +93,7 @@ piece_on :: proc(position: ^Position, sq: $T) -> (Piece, bool)
 
 	for colour in Colour {
 		for type in PieceType {
-			if position.pieces[colour][type] & to_bitboard(sq) != 0 {
+			if position.pieces[colour][type] & bitboard(sq) != 0 {
 				return make_piece(colour, type), true
 			}
 		}
@@ -103,11 +102,8 @@ piece_on :: proc(position: ^Position, sq: $T) -> (Piece, bool)
 	return {}, false
 }
 
-is_in_check :: proc(side: Colour, position: ^Position) -> bool {
-	atk: u64
-	if side == .White do atk = gen_attack_mask(.Black, position, occupied(position))
-	if side == .Black do atk = gen_attack_mask(.White, position, occupied(position))
-	return position.pieces[side][.King] & atk != 0
+is_in_check :: proc(position: ^Position, atk: u64) -> bool {
+	return atk & position.pieces[position.turn][.King] != 0
 }
 
 parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {
@@ -127,7 +123,7 @@ parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {
 			for pieces, colour in piece_chars {
 				for piece_char, piece in pieces {
 					if char == piece_char {
-						bb := to_bitboard(8*rank + file)
+						bb := bitboard(8*rank + file)
 						position.pieces[colour][piece] |= bb
 						position.occupancy[colour] |= bb
 						file -= 1

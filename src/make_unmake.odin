@@ -17,6 +17,7 @@ make_move :: proc(position: ^Position, move: Move) {
 	// store position features that cannot be recovered after making move
 	irreversibles := HistoryData {
 		position.ep_sq,
+		position.ep_target,
 		position.can_ep,
 		nil,
 		position.castling,
@@ -31,8 +32,8 @@ make_move :: proc(position: ^Position, move: Move) {
 
 	them := toggle(us)
 	flags := get_flags(move)
-	from_bb := to_bitboard(move.from)
-	to_bb := to_bitboard(move.to)
+	from_bb := bitboard(move.from)
+	to_bb := bitboard(move.to)
 	from_to_bb := from_bb | to_bb
 
 	if mover.type == .Pawn || .Capture in flags {
@@ -48,8 +49,8 @@ make_move :: proc(position: ^Position, move: Move) {
 
 	if flags == EP_CAPTURE {
 		captured := make_piece(them, .Pawn)
-		ep_target_sq := position.ep_sq - forward
-		ep_target := to_bitboard(ep_target_sq)
+		ep_target_sq := position.ep_target
+		ep_target := bitboard(ep_target_sq)
 		position.pieces[them][.Pawn] &~= ep_target
 		position.occupancy[them] &~= ep_target
 		position.hash ~= zobrist_p_sq(captured, ep_target_sq)
@@ -72,10 +73,12 @@ make_move :: proc(position: ^Position, move: Move) {
 			position.last_irreversible_ply = position.ply
 		}
 		position.ep_sq = 64
+		position.ep_target = 64
 	}
 
 	if flags == DOUBLE_PUSH {
 		position.ep_sq = int(move.from) + forward
+		position.ep_target = int(move.to)
 		possible_capturers := (to_bb << 1) &~ H_FILE | (to_bb >> 1) &~ A_FILE
 		if possible_capturers & position.pieces[them][.Pawn] != 0 {
 			position.hash ~= ZOBRIST_RANDS[EP_OFFSET + position.ep_sq % 8]
@@ -131,21 +134,21 @@ make_move :: proc(position: ^Position, move: Move) {
 		}
 	}
 
-	if .WKingside in position.castling && from_to_bb & to_bitboard(Square.H1) != 0 {
+	if .WKingside in position.castling && from_to_bb & bitboard(Square.H1) != 0 {
 		position.castling &~= {.WKingside}
 		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.WKingside)]
 		position.last_irreversible_ply = position.ply
-	} else if .WQueenside in position.castling && from_to_bb & to_bitboard(Square.A1) != 0 {
+	} else if .WQueenside in position.castling && from_to_bb & bitboard(Square.A1) != 0 {
 		position.castling &~= {.WQueenside}
 		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.WQueenside)]
 		position.last_irreversible_ply = position.ply
 	}
 
-	if .BKingside in position.castling && from_to_bb & to_bitboard(Square.H8) != 0 {
+	if .BKingside in position.castling && from_to_bb & bitboard(Square.H8) != 0 {
 		position.castling &~= {.BKingside}
 		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.BKingside)]
 		position.last_irreversible_ply = position.ply
-	} else if .BQueenside in position.castling && from_to_bb & to_bitboard(Square.A8) != 0 {
+	} else if .BQueenside in position.castling && from_to_bb & bitboard(Square.A8) != 0 {
 		position.castling &~= {.BQueenside}
 		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.BQueenside)]
 		position.last_irreversible_ply = position.ply
@@ -183,6 +186,7 @@ unmake_move :: proc(position: ^Position, move: Move) {
 
 	history := pop(&position.history)
 	position.ep_sq = history.ep_sq
+	position.ep_target = history.ep_target
 	position.can_ep = history.can_ep
 	position.castling = history.castling_rights
 	position.halfmove_clk = history.halfmove_clk
@@ -193,15 +197,15 @@ unmake_move :: proc(position: ^Position, move: Move) {
 	assert(ok && mover.colour == us)
 
 	flags := get_flags(move)
-	from_bb := to_bitboard(move.from)
-	to_bb := to_bitboard(move.to)
+	from_bb := bitboard(move.from)
+	to_bb := bitboard(move.to)
 	from_to_bb := from_bb | to_bb
 
 	position.pieces[us][mover.type] &~= to_bb // wait to toggle from_bb in case of promotion
 	position.occupancy[us] ~= from_to_bb
 
 	if flags == EP_CAPTURE {
-		ep_target := to_bitboard(position.ep_sq - forward)
+		ep_target := bitboard(position.ep_sq - forward)
 		position.pieces[them][.Pawn] |= ep_target
 		position.occupancy[them] |= ep_target
 	} else if .Capture in flags {
@@ -234,21 +238,21 @@ unmake_move :: proc(position: ^Position, move: Move) {
 }
 
 make_move_str :: proc(position: ^Position, str: string) -> (ok: bool) {
-	moves := gen_pseudo_legal_moves(position)
+	masks := gen_legality_masks(position)
+	moves := gen_moves(position, masks)
 	defer delete(moves)
 
 	for move in moves {
 		move_str := to_string(move)
 		defer delete(move_str)
 		if strings.equal_fold(move_str, str) {
-			make_move(position, move)
-			if is_in_check(toggle(position.turn), position) {
-				unmake_move(position, move)
-				return
+			if !is_legal(position, masks, move) {
+				return false
 			}
 
-			ok = true
-			break
+			make_move(position, move)
+
+			return true
 		}
 	}
 
@@ -263,6 +267,7 @@ make_null_move :: proc(position: ^Position) {
 	// store position features that cannot be recovered after making move
 	irreversibles := HistoryData{
 		position.ep_sq,
+		position.ep_target,
 		position.can_ep,
 		nil,
 		position.castling,

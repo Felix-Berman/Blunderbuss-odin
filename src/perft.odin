@@ -12,18 +12,18 @@ perft :: proc(position: ^Position, depth: int) -> (nodes: int) {
 		return 1
 	}
 
-	moves := gen_pseudo_legal_moves(position)
+	masks := gen_legality_masks(position)
+	moves := gen_moves(position, masks)
 	defer delete(moves)
 
 	us := position.turn
 
 	for move, i in moves {
+		if !is_legal(position, masks, move) do continue
+
 		make_move(position, move)
-		defer unmake_move(position, move)
-
-		if is_in_check(us, position) do continue
-
 		nodes += perft(position, depth - 1)
+		unmake_move(position, move)
 	}
 
 	return
@@ -36,18 +36,19 @@ perft_divide :: proc(position: ^Position, depth: int) {
 
 	total_nodes: int = 0
 
-	moves := gen_pseudo_legal_moves(position)
+	masks := gen_legality_masks(position)
+	moves := gen_moves(position, masks)
 	defer delete(moves)
 
 	us := position.turn
 	
 	for move in moves {
+		if !is_legal(position, masks, move) do continue
+
 		make_move(position, move)
-		defer unmake_move(position, move)
-
-		if is_in_check(us, position) do continue
-
 		nodes := perft(position, depth - 1)
+		unmake_move(position, move)
+
 		total_nodes += nodes
 
 		move_str := to_string(move)
@@ -60,7 +61,7 @@ perft_divide :: proc(position: ^Position, depth: int) {
 	fmt.println(total_nodes)
 }
 
-test_range :: [2]int{2, 126}
+test_range :: [2]int{1, 126}
 
 @(test)
 perft_suite :: proc(t: ^testing.T) {
@@ -74,7 +75,7 @@ perft_suite :: proc(t: ^testing.T) {
 
 	perft_str := string(perft_file)
 
-	test_num := 0
+	test_num := 1
 	for line in strings.split_lines_iterator(&perft_str) {
 		defer test_num += 1
 		if test_num < test_range[0] do continue
@@ -85,30 +86,26 @@ perft_suite :: proc(t: ^testing.T) {
 		if !ok do return
 
 		position := parse_fen(fen) or_continue
-        defer delete(position.history)
+		defer delete(position.history)
 
-		log.infof("perft test {}", test_num)
-		log.infof("FEN: {}",  fen)
+		log.infof("{}/{} FEN: {}",	test_num, test_range[1], fen)
 
 		for field in strings.split_iterator(&fields, ";") {
 			depths := strings.split(field, " ")
 			defer delete(depths)
 
-			depth_str := depths[0]
-			depth := depth_str[1] - '0'
+			depth := depths[0][1] - '0'
 			expected_nodes, ok := strconv.parse_int(depths[1])
 			if !ok do return
 
 			nodes := perft(&position, int(depth))
 			
 			if !testing.expect_value(t, nodes, expected_nodes) {
-                log.infof("depth {}: \033[31;1mFAIL\033[0m", depth)
+				log.infof("depth {}: \033[31;1mFAIL\033[0m", depth)
 				return
 			}
 
 			log.infof("depth {}: \033[32;1mSUCCESS\033[0m", depth)
 		}
-
-		test_num += 1
 	}
 }

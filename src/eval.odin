@@ -1,8 +1,5 @@
 package blunderbuss
 
-import "core:fmt"
-import "base:intrinsics"
-
 piece_value: [PieceType]int = {
 	.Pawn = 100,
 	.Knight = 300,
@@ -116,12 +113,12 @@ pawn_structure :: proc(us: Colour, pawns_us, pawns_them: u64) -> (mg, eg: int) {
 			ahead_mask <<= uint(8 * rank_idx + 8)
 			behind_mask >>= uint(8 * (7 - rank_idx))
 			pushed_distance = rank_idx
-			sentry_mask = to_bitboard(sq + 17) | to_bitboard(sq + 15)
+			sentry_mask = bitboard(sq + 17) | bitboard(sq + 15)
 		} else {
 			pushed_distance = 7 - rank_idx
 			ahead_mask >>= uint(8 * pushed_distance + 8)
 			behind_mask >>= uint(8 * rank_idx)
-			sentry_mask = to_bitboard(sq - 17) | to_bitboard(sq - 15)
+			sentry_mask = bitboard(sq - 17) | bitboard(sq - 15)
 		}
 
 		if (file_left | file_right) & pawns_us == 0 {

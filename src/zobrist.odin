@@ -1,6 +1,5 @@
 package blunderbuss
 
-import "core:fmt"
 import "base:intrinsics"
 
 ZOBRIST_COUNT :: 12 * 64 + 1 + 4 + 8 // piece * sq + turn + castling + en-passant
@@ -47,7 +46,7 @@ zobrist_hash :: proc(position: Position) -> (hash: u64) {
 	}
 	
 	if position.ep_sq < 64 {
-		ep_bb := to_bitboard(position.ep_sq)
+		ep_bb := bitboard(position.ep_sq)
 		possible_capturers: u64
 
 		if us == .White {

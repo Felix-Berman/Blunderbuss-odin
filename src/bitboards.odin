@@ -1,6 +1,10 @@
 package blunderbuss
 
-import  "base:intrinsics"
+import "base:builtin"
+import "base:intrinsics"
+
+RAYS := init_rays()
+BETWEEN := init_between()
 
 // Bitboards defined from MSB -> LSB : A8 -> H1
 // i.e. H1 = 0, A1 = 7, H8 = 56, A8 = 63
@@ -29,6 +33,21 @@ RANK_8: u64 : RANK_7 << 8
 MAIN_DIAGONAL: u64 : 0x8040201008040201;
 MAIN_ANTIDIAG: u64 : 0x0102040810204080;
 
+EMPTY_BB: u64 : 0
+FULL_BB :: ~EMPTY_BB
+
+Direction :: enum {N, S, E, W, NW, NE, SW, SE}
+DIRECTION_STEP := [Direction]int{
+	.N = 8,
+	.S = -8,
+	.E = -1,
+	.W = 1,
+	.NW = 9,
+	.NE = 7,
+	.SW = -7,
+	.SE = -9,
+}
+
 Square :: enum {
     H1 ,  G1 ,  F1 ,  E1 ,  D1 ,  C1 ,  B1 ,  A1 ,
     H2 ,  G2 ,  F2 ,  E2 ,  D2 ,  C2 ,  B2 ,  A2 ,
@@ -40,7 +59,7 @@ Square :: enum {
     H8 ,  G8 ,  F8 ,  E8 ,  D8 ,  C8 ,  B8 ,  A8 ,
 }
 
-to_bitboard :: proc(sq: $T) -> u64 
+bitboard :: proc "contextless" (sq: $T) -> u64 
     where intrinsics.type_is_numeric(T) {
     return 1 << uint(sq)
 }
@@ -50,6 +69,14 @@ SqMasks :: struct {
     file_mask: u64,
     diagonal_mask: u64,
     antidiag_mask: u64,
+}
+
+LegalMasks :: struct {
+	checkers: u64,
+	pinned: u64,
+	block_ray: u64,
+	pin_rays: [64]u64,
+	danger: u64,
 }
 
 init_sq_masks :: proc "contextless" () -> (masks: [64]SqMasks) {
@@ -100,4 +127,62 @@ mirror_horizontally :: proc(bitboard: u64) -> u64 {
     bb = ((bb >> 2) & k2) + 4 * (bb & k2)
     bb = ((bb >> 4) & k4) + 16 * (bb & k4)
     return bb
+}
+
+build_ray :: proc "contextless" (sq: int, dir: Direction) -> (ray: u64) {
+	num_steps: int
+
+	sq := int(sq)
+	rank := sq / 8
+	file := sq % 8
+
+	switch dir {
+	case .N:
+		num_steps = 7 - rank
+	case .S:
+		num_steps = rank
+	case .W:
+		num_steps = 7 - file
+	case .E:
+		num_steps = file
+	case .NW:
+		num_steps = builtin.min(7 - rank, 7 - file)
+	case .NE:
+		num_steps = builtin.min(7 - rank, file)
+	case .SW:
+		num_steps = builtin.min(rank, 7 - file)
+	case .SE:
+		num_steps = builtin.min(rank, file)
+	}
+
+	for i in 1..=num_steps {
+		ray |= bitboard(sq + i * DIRECTION_STEP[dir])
+	}
+	
+	return ray
+}
+
+init_rays :: proc "contextless" () -> (rays: [64][Direction]u64) {
+	for sq in 0..<64 {
+		for dir in Direction {
+			rays[sq][dir] = build_ray(sq, dir)
+		}
+	}
+	return
+}
+
+init_between :: proc "contextless" () -> (between: [64][64]u64) {
+	for from in 0..<64 {
+		for dir, i in Direction {
+			step := DIRECTION_STEP[dir]
+			ray := RAYS[from][dir]
+			bb: u64 = 0
+			for to := from + step; bitboard(to) & ray != 0; to += step {
+				between[from][to] = bb
+				bb |= bitboard(to)
+			}
+		}
+	}
+
+	return
 }

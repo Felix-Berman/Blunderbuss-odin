@@ -73,7 +73,8 @@ root_search :: proc(data: ^SearchData) -> int {
 	defer bufio.writer_destroy(&writer)
 
 	us := data.position.turn
-	moves := gen_pseudo_legal_moves(&data.position)
+	masks := gen_legality_masks(&data.position)
+	moves := gen_moves(&data.position, masks)
 	defer delete(moves)
 	
 	found_mate: bool
@@ -107,16 +108,13 @@ root_search :: proc(data: ^SearchData) -> int {
 			move_count := 0
 			for i in 0..<len(moves) {
 				move := pick_move(moves[i:], sort_scores[i:])
-				make_move(&data.position, move)
-				defer unmake_move(&data.position, move)
+				if !is_legal(&data.position, masks, move) do continue
 				
 				// useful to see formatted move in debugger
 				when ODIN_DEBUG {
 					move_str := to_string(move)
 					defer delete(move_str)
 				}
-
-				if is_in_check(us, &data.position) do continue
 
 				move_count += 1
 				currmove := to_string(move, context.temp_allocator)
@@ -130,7 +128,9 @@ root_search :: proc(data: ^SearchData) -> int {
 					bufio.writer_flush(&writer)
 				}
 
+				make_move(&data.position, move)
 				eval := -negamax(-beta, -alpha, depth - 1, ply + 1, data)
+				unmake_move(&data.position, move)
 
 				if data.aborted do break iterative_deepening
 
@@ -267,14 +267,15 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 	}
 
 	us := data.position.turn
-	moves := gen_pseudo_legal_moves(&data.position)
+	masks := gen_legality_masks(&data.position)
+	moves := gen_moves(&data.position, masks)
 	sort_scores := score_moves(moves[:], ply, best_move, data)
 	defer {
 		delete(moves)
 		delete(sort_scores)
 	}
 
-	if !is_in_check(us, &data.position) && !is_pawn_endgame(data.position) {
+	if !is_in_check(&data.position, masks.danger) && !is_pawn_endgame(data.position) {
 		null_depth := depth - NULL_MOVE_REDUCTION - 1
 
 		if null_depth >= 0 {
@@ -300,18 +301,15 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 	move_count := 0
 	for i in 0..<len(moves) {
 		move := pick_move(moves[i:], sort_scores[i:])
+		if !is_legal(&data.position, masks, move) do continue
 		flags := get_flags(move)
-		make_move(&data.position, move)
-		defer unmake_move(&data.position, move)
+		move_count += 1
 
 		// useful to see formatted move in debugger
 		when ODIN_DEBUG {
 			move_str := to_string(move)
 			defer delete(move_str)
 		}
-
-		if is_in_check(us, &data.position) do continue
-		move_count += 1
 
 		r := 0
 		if !is_pv && depth > 2 && move_count > 2 {
@@ -320,6 +318,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 			r = builtin.min(r, depth - 2)
 		}
 
+		make_move(&data.position, move)
 		eval: int
 		if move_count == 1 {
 			eval = -negamax(-beta, -alpha, depth - 1, ply + 1, data)
@@ -329,10 +328,10 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 				eval = -negamax(-beta, -alpha, depth - 1, ply + 1, data)
 			}
 		}
+		unmake_move(&data.position, move)
 
 		if data.aborted do return 0
 
-		
 		if eval > best_eval {
 			best_eval = eval
 			best_move = move
@@ -354,7 +353,7 @@ negamax :: proc(alpha, beta, depth, ply: int, data: ^SearchData) -> int {
 	}
 
 	if move_count == 0 {
-		if is_in_check(us, &data.position) {
+		if is_in_check(&data.position, masks.danger) {
 			return -MATE_EVAL + ply
 		}
 		return 0
@@ -408,7 +407,8 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 
 	us := data.position.turn
 	them := toggle(us)
-	in_check := is_in_check(us, &data.position)
+	masks := gen_legality_masks(&data.position)
+	in_check := is_in_check(&data.position, masks.danger)
 	alpha := alpha
 	standing_pat := eval(&data.position)
 	best_move: Move
@@ -434,7 +434,7 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 		}
 	}
 
-	moves := gen_pseudo_legal_moves(&data.position)
+	moves := gen_moves(&data.position, masks)
 	sort_scores := score_moves(moves[:], ply, best_move, data)
 	defer {
 		delete(moves)
@@ -445,8 +445,10 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 	move_count := 0
 	for i in 0..<len(moves) {
 		move := pick_move(moves[i:], sort_scores[i:])
+		if !is_legal(&data.position, masks, move) do continue
 		flags := get_flags(move)
 		if !in_check && !is_dynamic(flags) do continue
+		move_count += 1
 
 		when ODIN_DEBUG {
 			// useful to see formatted move in debugger
@@ -503,12 +505,8 @@ q_search :: proc(alpha, beta, ply: int, data: ^SearchData) -> int {
 		}
 
 		make_move(&data.position, move)
-		defer unmake_move(&data.position, move)
-
-		if is_in_check(us, &data.position) do continue
-		move_count += 1
-
 		eval := -q_search(-beta, -alpha, ply + 1, data)
+		unmake_move(&data.position, move)
 
 		if data.aborted do return 0
 		
@@ -629,7 +627,7 @@ threefold_repetition :: proc(data: ^SearchData, search_ply: int) -> bool {
 
 see :: proc(position: ^Position, move: Move) -> int {
 	to := int(move.to)
-	to_bb := to_bitboard(to)
+	to_bb := bitboard(to)
 	victim_type: PieceType
 	us := position.turn
 	occ := occupied(position)
@@ -638,7 +636,7 @@ see :: proc(position: ^Position, move: Move) -> int {
 
 	if EP_CAPTURE == get_flags(move) {
 		victim_type = .Pawn
-		ep_bb := to_bitboard(position.ep_sq)
+		ep_bb := bitboard(position.ep_sq)
 		occ &~= ep_bb >> 8 if us == .White else ep_bb << 8
 	} else {
 		victim, ok := piece_on(position, to)
@@ -652,12 +650,12 @@ see :: proc(position: ^Position, move: Move) -> int {
 	attacker, ok := piece_on(position, move.from)
 	assert(ok, "Attempt to move from empty square")
 	assert(
-		attackers[us] & to_bitboard(move.from) != 0,
+		attackers[us] & bitboard(move.from) != 0,
 		"Initial attacker not included in see attack set"
 	)
 
 	victim_type = attacker.type
-	occ &~= to_bitboard(move.from)
+	occ &~= bitboard(move.from)
 	us = toggle(us)
 
 	for depth < 32 {
@@ -707,7 +705,7 @@ see :: proc(position: ^Position, move: Move) -> int {
 		)
 
 		victim_type = next_attacker
-		occ &~= to_bitboard(next_sq)
+		occ &~= bitboard(next_sq)
 		us = toggle(us)
 	}
 	

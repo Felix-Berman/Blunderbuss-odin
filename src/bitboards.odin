@@ -3,9 +3,6 @@ package blunderbuss
 import "base:builtin"
 import "base:intrinsics"
 
-RAYS := init_rays()
-BETWEEN := init_between()
-
 // Bitboards defined from MSB -> LSB : A8 -> H1
 // i.e. H1 = 0, A1 = 7, H8 = 56, A8 = 63
 // This encoding makes visualising bitboards in hex form more intuitive. Reading left to right maps to 

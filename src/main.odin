@@ -3,8 +3,6 @@ package blunderbuss
 import "core:mem"
 import "core:fmt"
 
-SQ_MASKS := init_sq_masks()
-
 main :: proc() {
 	when ODIN_DEBUG {
 		track: mem.Tracking_Allocator

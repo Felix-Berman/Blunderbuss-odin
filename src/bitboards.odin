@@ -1,6 +1,5 @@
 package blunderbuss
 
-import "base:builtin"
 import "base:intrinsics"
 
 // Bitboards defined from MSB -> LSB : A8 -> H1
@@ -56,16 +55,11 @@ Square :: enum {
     H8 ,  G8 ,  F8 ,  E8 ,  D8 ,  C8 ,  B8 ,  A8 ,
 }
 
-bitboard :: proc "contextless" (sq: $T) -> u64 
-    where intrinsics.type_is_numeric(T) {
-    return 1 << uint(sq)
-}
-
 SqMasks :: struct {
-    rank_mask: u64,
-    file_mask: u64,
-    diagonal_mask: u64,
-    antidiag_mask: u64,
+    rank: u64,
+    file: u64,
+    diagonal: u64,
+    antidiag: u64,
 }
 
 LegalMasks :: struct {
@@ -76,28 +70,9 @@ LegalMasks :: struct {
 	danger: u64,
 }
 
-init_sq_masks :: proc "contextless" () -> (masks: [64]SqMasks) {
-    for rank: uint = 0; rank < 8; rank += 1 {
-        for file: uint = 0; file < 8; file += 1 {
-            sq := 8*rank + file
-
-            masks[sq].rank_mask = RANK_1 << (8*rank)
-            masks[sq].file_mask = H_FILE << file
-
-            if rank >= file {
-                masks[sq].diagonal_mask = MAIN_DIAGONAL << ((rank - file) * 8)
-            } else {
-                masks[sq].diagonal_mask = MAIN_DIAGONAL >> ((file - rank) * 8)
-            }
-
-            if rank + file >= 7 {
-                masks[sq].antidiag_mask = MAIN_ANTIDIAG << ((rank + file - 7) * 8)
-            } else {
-                masks[sq].antidiag_mask = MAIN_ANTIDIAG >> ((7 - rank - file) * 8)
-            }
-        }
-    }
-    return
+bitboard :: proc "contextless" (sq: $T) -> u64 
+    where intrinsics.type_is_numeric(T) {
+    return 1 << uint(sq)
 }
 
 lsb :: proc(bitboard: u64) -> int {
@@ -124,62 +99,4 @@ mirror_horizontally :: proc(bitboard: u64) -> u64 {
     bb = ((bb >> 2) & k2) + 4 * (bb & k2)
     bb = ((bb >> 4) & k4) + 16 * (bb & k4)
     return bb
-}
-
-build_ray :: proc "contextless" (sq: int, dir: Direction) -> (ray: u64) {
-	num_steps: int
-
-	sq := int(sq)
-	rank := sq / 8
-	file := sq % 8
-
-	switch dir {
-	case .N:
-		num_steps = 7 - rank
-	case .S:
-		num_steps = rank
-	case .W:
-		num_steps = 7 - file
-	case .E:
-		num_steps = file
-	case .NW:
-		num_steps = builtin.min(7 - rank, 7 - file)
-	case .NE:
-		num_steps = builtin.min(7 - rank, file)
-	case .SW:
-		num_steps = builtin.min(rank, 7 - file)
-	case .SE:
-		num_steps = builtin.min(rank, file)
-	}
-
-	for i in 1..=num_steps {
-		ray |= bitboard(sq + i * DIRECTION_STEP[dir])
-	}
-	
-	return ray
-}
-
-init_rays :: proc "contextless" () -> (rays: [64][Direction]u64) {
-	for sq in 0..<64 {
-		for dir in Direction {
-			rays[sq][dir] = build_ray(sq, dir)
-		}
-	}
-	return
-}
-
-init_between :: proc "contextless" () -> (between: [64][64]u64) {
-	for from in 0..<64 {
-		for dir, i in Direction {
-			step := DIRECTION_STEP[dir]
-			ray := RAYS[from][dir]
-			bb: u64 = 0
-			for to := from + step; bitboard(to) & ray != 0; to += step {
-				between[from][to] = bb
-				bb |= bitboard(to)
-			}
-		}
-	}
-
-	return
 }

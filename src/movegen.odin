@@ -108,11 +108,11 @@ gen_piece_moves :: proc(position: ^Position, masks: LegalMasks, moves: ^[dynamic
 			case .Knight:
 				move_proc = knight_moves_sq
 			case .Bishop:
-				move_proc = bishop_moves
+				move_proc = magic_bishop_moves
 			case .Rook:
-				move_proc = rook_moves
+				move_proc = magic_rook_moves
 			case .Queen:
-				move_proc = queen_moves
+				move_proc = magic_queen_moves
 			case .King:
 				move_proc = king_moves_sq
 		}
@@ -349,11 +349,11 @@ gen_attack_mask :: proc($side: Colour, position: ^Position, occ: u64) -> (atk: u
 
 	for bishop_queen > 0 {
 		sq := pop_lsb(&bishop_queen)
-		atk |= bishop_moves(sq, occ)
+		atk |= magic_bishop_moves(sq, occ)
 	}
 	for rook_queen > 0 {
 		sq := pop_lsb(&rook_queen)
-		atk |= rook_moves(sq, occ)
+		atk |= magic_rook_moves(sq, occ)
 	}
 
 	return
@@ -374,8 +374,8 @@ gen_legality_masks :: proc(position: ^Position) -> (masks: LegalMasks) {
 	occ_them := position.occupancy[them]
 	occ_kingless := occupied(position) &~ pieces[us][.King]
 
-	attackers := bishop_moves(king_sq_us, occ_them) & bishoplike_them
-	attackers |= rook_moves(king_sq_us, occ_them) & rooklike_them
+	attackers := magic_bishop_moves(king_sq_us, occ_them) & bishoplike_them
+	attackers |= magic_rook_moves(king_sq_us, occ_them) & rooklike_them
 
 	for attackers > 0 {
 		from := pop_lsb(&attackers)
@@ -405,12 +405,12 @@ gen_legality_masks :: proc(position: ^Position) -> (masks: LegalMasks) {
 	
 	for bishoplike_them > 0 {
 		from := pop_lsb(&bishoplike_them)
-		masks.danger |= bishop_moves(from, occ_kingless)
+		masks.danger |= magic_bishop_moves(from, occ_kingless)
 	}
 
 	for rooklike_them > 0 {
 		from := pop_lsb(&rooklike_them)
-		masks.danger |= rook_moves(from, occ_kingless)
+		masks.danger |= magic_rook_moves(from, occ_kingless)
 	}
 
 	return
@@ -455,8 +455,8 @@ attackers_to :: proc(position: ^Position, sq: int) -> (attackers: [Colour]u64) {
 		rook_like := pieces[side][.Rook] | pieces[side][.Queen]
 		
 		attackers[side] |= knight_moves(bb) & pieces[side][.Knight]
-		attackers[side] |= bishop_moves(sq, occ) & bishop_like
-		attackers[side] |= rook_moves(sq, occ) & rook_like
+		attackers[side] |= magic_bishop_moves(sq, occ) & bishop_like
+		attackers[side] |= magic_rook_moves(sq, occ) & rook_like
 		attackers[side] |= king_moves(bb) & pieces[side][.King]
 	}
 	
@@ -468,42 +468,42 @@ attackers_to :: proc(position: ^Position, sq: int) -> (attackers: [Colour]u64) {
 
 diagonal_attacks :: proc(sq: int, occ: u64) -> u64 {
 	sq_bb  := bitboard(sq)
-	forward := occ & SQ_MASKS[sq].diagonal_mask // remove all but relevant blockers
+	forward := occ & SQ_MASKS[sq].diagonal// remove all but relevant blockers
 	reverse := mirror_vertically(forward)
 	forward -= 2 * sq_bb						// remove sliders and carry borrow from least significant blocker
 	reverse -= 2 * mirror_vertically(sq_bb)
 	forward ~= mirror_vertically(reverse)		// combine directions
-	return forward & SQ_MASKS[sq].diagonal_mask // mask to relevant sliding axis
+	return forward & SQ_MASKS[sq].diagonal// mask to relevant sliding axis
 }
 
 antidiag_attacks :: proc(sq: int, occ: u64) -> u64 {
 	sq_bb := bitboard(sq)
-	forward := occ & SQ_MASKS[sq].antidiag_mask // remove all but relevant blockers
+	forward := occ & SQ_MASKS[sq].antidiag// remove all but relevant blockers
 	reverse := mirror_vertically(forward)
 	forward -= 2 * sq_bb						// remove sliders and carry borrow from least significant blocker
 	reverse -= 2 * mirror_vertically(sq_bb)
 	forward ~= mirror_vertically(reverse)		// combine directions
-	return forward & SQ_MASKS[sq].antidiag_mask // mask to relevant sliding axis
+	return forward & SQ_MASKS[sq].antidiag// mask to relevant sliding axis
 }
 
 file_attacks :: proc(sq: int, occ: u64) -> u64 {
 	sq_bb := bitboard(sq)
-	forward := occ & SQ_MASKS[sq].file_mask		// remove all but relevant blockers
+	forward := occ & SQ_MASKS[sq].file// remove all but relevant blockers
 	reverse := mirror_vertically(forward)
 	forward -= 2 * sq_bb						// remove sliders and carry borrow from least significant blocker
 	reverse -= 2 * mirror_vertically(sq_bb)
 	forward ~= mirror_vertically(reverse)		// combine directions
-	return forward & SQ_MASKS[sq].file_mask		// mask to relevant sliding axis
+	return forward & SQ_MASKS[sq].file// mask to relevant sliding axis
 }
 
 rank_attacks :: proc(sq: int, occ: u64) -> u64 {
 	sq_bb := bitboard(sq)
-	forward := occ & SQ_MASKS[sq].rank_mask		// remove all but relevant blockers
+	forward := occ & SQ_MASKS[sq].rank// remove all but relevant blockers
 	reverse := mirror_horizontally(forward)
 	forward -= 2 * sq_bb						// remove sliders and carry borrow from least significant blocker
 	reverse -= 2 * mirror_horizontally(sq_bb)
 	forward ~= mirror_horizontally(reverse)		// combine directions
-	return forward & SQ_MASKS[sq].rank_mask		// mask to relevant sliding axis
+	return forward & SQ_MASKS[sq].rank// mask to relevant sliding axis
 }
 
 // compute rank attacks for all rooks in bitboard

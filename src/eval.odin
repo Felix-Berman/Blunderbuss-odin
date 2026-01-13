@@ -101,7 +101,7 @@ pawn_structure :: proc(us: Colour, pawns_us, pawns_them: u64) -> (mg, eg: int) {
 		file_idx := sq % 8
 		file_count[file_idx] += 1
 		
-		file := SQ_MASKS[sq].file_mask
+		file := SQ_MASKS[sq].file
 		file_left := (file << 1) &~ H_FILE
 		file_right := (file >> 1) &~ A_FILE
 

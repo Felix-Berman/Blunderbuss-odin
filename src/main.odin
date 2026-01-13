@@ -20,5 +20,6 @@ main :: proc() {
 		}
 	}
 
+	init_magics()
 	uci_loop()
 }

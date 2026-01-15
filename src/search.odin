@@ -179,6 +179,10 @@ root_search :: proc(data: ^SearchData) -> int {
 				hashfull(t_table), eval_type, print_eval, eval_bound, pv_str
 			)
 
+			if move_count == 1 {
+				break
+			}
+
 			// break out of aspiration if in window
 			if alpha < best_eval && best_eval < beta {
 				prev_eval = best_eval

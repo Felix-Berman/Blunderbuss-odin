@@ -75,7 +75,7 @@ gen_king_evasions :: proc(position: ^Position, masks: LegalMasks) -> []Move {
 	occ := occupied(position)
 	king := position.pieces[position.turn][.King]
 	king_sq := lsb(king)
-	move_bb := king_moves(king) &~ masks.danger
+	move_bb := KING_TABLE[king_sq] &~ masks.danger
 	quiets := move_bb &~ occ
 	captures := move_bb & position.occupancy[them]
 	
@@ -169,11 +169,11 @@ knight_moves :: proc(knight: u64) -> (move_bb: u64) {
 
 // wrappers for generalised move procedure pointer
 king_moves_sq :: proc(sq: int, _: u64) -> u64 {
-	return king_moves(bitboard(sq))
+	return KING_TABLE[sq]
 }
 
 knight_moves_sq :: proc(sq: int, _: u64) -> u64 {
-	return knight_moves(bitboard(sq))
+	return KNIGHT_TABLE[sq]
 }
 
 bishop_moves :: proc(sq: int, occ: u64) -> u64 {
@@ -343,7 +343,7 @@ gen_attack_mask :: proc($side: Colour, position: ^Position, occ: u64) -> (atk: u
 	rook_queen := position.pieces[side][.Rook] | position.pieces[side][.Queen]
 	pawns := position.pieces[side][.Pawn]
 
-	atk |= king_moves(king)
+	atk |= KING_TABLE[lsb(king)]
 	atk |= knight_moves(knights)
 	atk |= pawn_attacks(side, pawns)
 
@@ -365,7 +365,8 @@ gen_legality_masks :: proc(position: ^Position) -> (masks: LegalMasks) {
 	pieces := position.pieces
 	king_bb_us := pieces[us][.King]
 	king_sq_us := lsb(king_bb_us)
-	king_them := pieces[them][.King]
+	king_bb_them := pieces[them][.King]
+	king_sq_them := lsb(king_bb_them)
 	pawns_them := pieces[them][.Pawn]
 	knights_them := pieces[them][.Knight]
 	bishoplike_them := pieces[them][.Bishop] | pieces[them][.Queen]
@@ -390,7 +391,7 @@ gen_legality_masks :: proc(position: ^Position) -> (masks: LegalMasks) {
 		}
 	}
 
-	masks.checkers |= knight_moves(king_bb_us) & pieces[them][.Knight]
+	masks.checkers |= KNIGHT_TABLE[king_sq_us] & pieces[them][.Knight]
 	masks.checkers |= pawn_attacks(us, king_bb_us) & pieces[them][.Pawn]
 
 	if masks.checkers == 0 {
@@ -399,7 +400,7 @@ gen_legality_masks :: proc(position: ^Position) -> (masks: LegalMasks) {
 		masks.block_ray |= masks.checkers
 	}
 
-	masks.danger |= king_moves(king_them)
+	masks.danger |= KING_TABLE[king_sq_them]
 	masks.danger |= pawn_attacks(them, pawns_them)
 	masks.danger |= knight_moves(knights_them)
 	
@@ -454,10 +455,10 @@ attackers_to :: proc(position: ^Position, sq: int) -> (attackers: [Colour]u64) {
 		bishop_like := pieces[side][.Bishop] | pieces[side][.Queen]
 		rook_like := pieces[side][.Rook] | pieces[side][.Queen]
 		
-		attackers[side] |= knight_moves(bb) & pieces[side][.Knight]
+		attackers[side] |= KNIGHT_TABLE[sq] & pieces[side][.Knight]
 		attackers[side] |= magic_bishop_moves(sq, occ) & bishop_like
 		attackers[side] |= magic_rook_moves(sq, occ) & rook_like
-		attackers[side] |= king_moves(bb) & pieces[side][.King]
+		attackers[side] |= KING_TABLE[sq] & pieces[side][.King]
 	}
 	
 	return

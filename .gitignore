@@ -3,5 +3,6 @@
 *.rdi
 *.pgn
 *.obj
+*.spall
 versions/
 sprt_log/

@@ -20,6 +20,6 @@ main :: proc() {
 		}
 	}
 
-	init_magics()
+	init_piece_tables()
 	uci_loop()
 }

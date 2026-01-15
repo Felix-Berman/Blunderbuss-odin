@@ -65,7 +65,7 @@ test_range :: [2]int{1, 126}
 
 @(test)
 perft_suite :: proc(t: ^testing.T) {
-	init_magics()
+	init_piece_tables()
 
 	perft_file, ok := os.read_entire_file("perftsuite.epd")
 

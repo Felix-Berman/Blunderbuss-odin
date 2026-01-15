@@ -4,6 +4,9 @@ import "core:slice"
 
 MAGIC_SEED :: 18401105770426537108
 
+KING_TABLE: [64]u64
+KNIGHT_TABLE: [64]u64
+
 ROOK_TABLE: [64][4096]u64
 ROOK_MAGICS: [64]Magic
 ROOK_SHIFT :: 12
@@ -68,7 +71,7 @@ find_magic :: proc(
 	}
 }
 
-init_magics :: proc() {
+init_piece_tables :: proc() {
 	offset := 0
 	for sq in 0..<64 {
 		rng_state: u64 = MAGIC_SEED
@@ -88,6 +91,10 @@ init_magics :: proc() {
 			rook_mask, sq, ROOK_SHIFT, ROOK_TABLE[sq][:], rook_moves)
 		BISHOP_MAGICS[sq] = find_magic(
 			bishop_mask, sq, BISHOP_SHIFT, BISHOP_TABLE[sq][:], bishop_moves)
+
+		sq_bb := bitboard(sq)
+		KING_TABLE[sq] = king_moves(sq_bb)
+		KNIGHT_TABLE[sq] = knight_moves(sq_bb)
 	}
 }
 

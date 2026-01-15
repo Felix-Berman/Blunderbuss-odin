@@ -3,7 +3,7 @@ package blunderbuss
 import "core:time"
 import "core:fmt"
 
-BENCH_DEPTH :: 5
+BENCH_DEPTH :: 8
 
 bench :: proc(depth: int = BENCH_DEPTH) {
 	total_nodes: int

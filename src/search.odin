@@ -36,6 +36,7 @@ SearchData :: struct {
 	seldepth: int,
 	nodes: int,
 	max_nodes: int,
+	ebf: f64,
 	mate: bool,
 	aborted: bool,
 	infinite: bool,
@@ -96,6 +97,8 @@ root_search :: proc(data: ^SearchData) -> int {
 	prev_best: Move
 	best_since_depth: int
 	last_aspiration_fail: int
+	nodes_history: [MAX_DEPTH]int = {}
+	prev_search_time: time.Duration
 
 	alpha := MIN_EVAL
 	beta := MAX_EVAL
@@ -104,6 +107,7 @@ root_search :: proc(data: ^SearchData) -> int {
 	ply := 0
 	iterative_deepening:
 	for depth in 1..=data.max_depth {
+		depth_timer := time.tick_now()
 		if found_mate do break
 
 		upper_window := ASPIRATION_WINDOW
@@ -113,6 +117,11 @@ root_search :: proc(data: ^SearchData) -> int {
 			alpha = prev_eval - lower_window
 			beta = prev_eval + upper_window
 		}
+
+		sort_scores := score_moves(
+			moves[:], 0, prev_best, NULL_MOVE, NIL_PIECE, data
+		)
+		defer delete(sort_scores)
 		
 		aspiration_loop:
 		for {
@@ -120,11 +129,6 @@ root_search :: proc(data: ^SearchData) -> int {
 			second_move: Move
 			best_eval := MIN_EVAL
 			second_eval := MIN_EVAL
-
-			sort_scores := score_moves(
-				moves[:], 0, prev_best, NULL_MOVE, NIL_PIECE, data
-			)
-			defer delete(sort_scores)
 
 			data.pv_length = {}
 			move_count := 0
@@ -150,6 +154,8 @@ root_search :: proc(data: ^SearchData) -> int {
 					bufio.writer_flush(&writer)
 				}
 
+				prev_nodes := data.nodes
+
 				make_move(&data.position, move)
 				eval := -negamax(-beta, -alpha, depth - 1, ply + 1, NULL_MOVE, data)
 				unmake_move(&data.position, move)
@@ -166,6 +172,8 @@ root_search :: proc(data: ^SearchData) -> int {
 					second_move = move
 					second_eval = eval
 				}
+
+				nodes_history[depth - 1] = data.nodes - prev_nodes
 			}
 			bufio.writer_reset(&writer, stdout)
 			free_all(context.temp_allocator)
@@ -220,27 +228,58 @@ root_search :: proc(data: ^SearchData) -> int {
 				}
 
 				if !data.infinite && depth - best_since_depth >= 2 && 
-					depth - last_aspiration_fail >= 2 {
+					depth - last_aspiration_fail >= 2 && elapsed > 0 {
 
 					// threshold for stopping early decreases hyperbolically as
 					// allocated time runs out.
-					certainty_threshold := f64(data.allowed_time)/f64(elapsed)
+					certainty_threshold := 1.5 * f64(data.allowed_time)/f64(elapsed)
+
+					pv_stability := f64(depth - best_since_depth)
 
 					// Increase certainty if the best move is much better than
 					// the second best
-					eval_delta := f64(best_eval - second_eval) / 100
-					eval_delta *= 2 * math.log2(f64(depth + 3))
+					best_wdl := wdl(best_eval, 0)
+					second_wdl := wdl(second_eval, 0)
+					eval_delta := best_wdl - second_wdl
+					eval_delta *= math.log2(f64(depth + 2))
 
-					eval_grad := best_eval - prev_eval
+					eval_stability := 1 / f64(1 + abs(best_eval - prev_eval))
 
-					certainty := eval_delta
+					depth_bonus := f64(depth) / 10
+
+					certainty := 0.35 * pv_stability + 1.8 * eval_delta +
+						0.6 * eval_stability + 0.15 * depth_bonus
 
 					if certainty >= certainty_threshold {
 						break iterative_deepening
 					}
 				}
 
+				// estimate the time required for next depth. Only bother
+				// searching if theres time to finish 20% of it
+				if !data.infinite && depth > 2 {
+					two_ply_ratio := f64(nodes_history[depth - 1]) /
+						f64(nodes_history[depth - 3])
+
+					ebf := math.sqrt(two_ply_ratio)
+					ebf = max(1.5, min(ebf, 4))
+
+					// moving average smoothing
+					if data.ebf != 0 {
+						data.ebf = data.ebf * 0.5 + ebf * 0.5
+					} else {
+						data.ebf = ebf
+					}
+
+					remaining_time := data.allowed_time - elapsed
+					estimated_time := f64(prev_search_time) * data.ebf
+					if estimated_time > f64(remaining_time) {
+						break iterative_deepening
+					}
+				}
+
 				prev_eval = best_eval
+				prev_search_time = time.tick_since(depth_timer)
 
 				break
 			}
@@ -479,7 +518,8 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 
 	data.nodes += 1
 	if ply >= MAX_DEPTH {
-		return eval(&data.position)
+		eval, _ := evaluate(&data.position)
+		return eval
 	}
 
 	if ply > data.seldepth {
@@ -493,7 +533,7 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 	masks := gen_legality_masks(&data.position)
 	in_check := is_in_check(&data.position, masks.danger)
 	alpha := alpha
-	standing_pat := eval(&data.position)
+	standing_pat, _ := evaluate(&data.position)
 	best_move: Move
 
 	prev_piece := NIL_PIECE

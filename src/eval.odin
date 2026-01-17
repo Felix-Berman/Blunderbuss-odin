@@ -1,5 +1,7 @@
 package blunderbuss
 
+import "core:math"
+
 piece_value: [PieceType]int = {
 	.Pawn = 100,
 	.Knight = 300,
@@ -31,7 +33,13 @@ EG_BACKWARD_PAWN_PENALTY :: 10
 MG_BISHOP_PAIR_WEIGHT :: 10
 EG_BISHOP_PAIR_WEIGHT :: 50
 
-eval :: proc(position: ^Position) -> int {
+wdl :: proc(eval: int, phase: int) -> f64 {
+	scale := 400 * (24 - phase)/24
+	return 1 / (1 + math.pow(10, -f64(eval/400)))
+}
+
+
+evaluate :: proc(position: ^Position) -> (int, int) {
 	mg_material: [Colour]int
 	eg_material: [Colour]int
 	us := position.turn
@@ -85,7 +93,7 @@ eval :: proc(position: ^Position) -> int {
 		eg_eval -= EG_BISHOP_PAIR_WEIGHT
 	}
 
-	return (mg_eval * phase + eg_eval * (24 - phase)) / 24
+	return (mg_eval * phase + eg_eval * (24 - phase)) / 24, phase
 }
 
 pawn_structure :: proc(us: Colour, pawns_us, pawns_them: u64) -> (mg, eg: int) {

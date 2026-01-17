@@ -1,5 +1,6 @@
 package blunderbuss
 
+import "base:intrinsics"
 import "core:math"
 
 piece_value: [PieceType]int = {
@@ -32,6 +33,24 @@ MG_BACKWARD_PAWN_PENALTY :: 5
 EG_BACKWARD_PAWN_PENALTY :: 10
 MG_BISHOP_PAIR_WEIGHT :: 10
 EG_BISHOP_PAIR_WEIGHT :: 50
+
+MG_MOBILITY_WEIGHT: [PieceType]int = {
+	.Pawn = 0,
+	.Knight = 4,
+	.Bishop = 3,
+	.Rook = 2,
+	.Queen = 1,
+	.King = 0,
+}
+
+EG_MOBILITY_WEIGHT: [PieceType]int = {
+	.Pawn = 0,
+	.Knight = 4,
+	.Bishop = 4,
+	.Rook = 4,
+	.Queen = 2,
+	.King = 5,
+}
 
 wdl :: proc(eval: int, phase: int) -> f64 {
 	scale := 400 * (24 - phase)/24
@@ -93,7 +112,53 @@ evaluate :: proc(position: ^Position) -> (int, int) {
 		eg_eval -= EG_BISHOP_PAIR_WEIGHT
 	}
 
+	mg_mobility_us, eg_mobility_us := mobility(position, us)
+	mg_mobility_them, eg_mobility_them := mobility(position, them)
+	mg_eval += mg_mobility_us - mg_mobility_them
+	eg_eval += eg_mobility_us - eg_mobility_them
+
 	return (mg_eval * phase + eg_eval * (24 - phase)) / 24, phase
+}
+
+mobility :: proc(position: ^Position, us: Colour) -> (mg, eg: int) {
+	them := toggle(us)
+	occ := occupied(position)
+
+	enemy_pawns := position.pieces[them][.Pawn]
+	pawn_controlled := pawn_attacks(them, enemy_pawns)
+
+	for bb, piece in position.pieces[us] {
+		from_bb := bb
+
+		for from_bb > 0 {
+			from := pop_lsb(&from_bb)
+
+			to_bb: u64
+			switch piece {
+			case .Pawn:
+				continue
+			case .Knight:
+				to_bb = KNIGHT_TABLE[from]
+			case .Bishop:
+				to_bb = magic_bishop_moves(from, occ)
+			case .Rook:
+				to_bb = magic_rook_moves(from, occ)
+			case .Queen:
+				to_bb = magic_queen_moves(from, occ)
+			case .King:
+				to_bb = KING_TABLE[from]
+			}
+
+			to_bb &~= position.occupancy[us] | pawn_controlled
+			mobility := int(intrinsics.count_ones(to_bb))
+
+			mg += MG_MOBILITY_WEIGHT[piece] * mobility
+			eg += EG_MOBILITY_WEIGHT[piece] * mobility
+		}
+
+	}
+
+	return
 }
 
 pawn_structure :: proc(us: Colour, pawns_us, pawns_them: u64) -> (mg, eg: int) {

@@ -129,7 +129,7 @@ go :: proc(line: ^string, position: ^Position) -> bool {
 	data := new(SearchData, runtime.default_allocator())
 	data^ = init_data(position^)
 	side_time, wtime, btime, side_inc, winc, binc, movetime: int
-	movestogo := 40
+	movestogo := 20
 
 	for cmd in strings.split_iterator(line, " ") {
 		switch cmd {

@@ -93,7 +93,9 @@ root_search :: proc(data: ^SearchData) -> int {
 	defer delete(moves)
 	
 	found_mate: bool
-	best_move: Move
+	prev_best: Move
+	best_since_depth: int
+	last_aspiration_fail: int
 
 	alpha := MIN_EVAL
 	beta := MAX_EVAL
@@ -114,10 +116,13 @@ root_search :: proc(data: ^SearchData) -> int {
 		
 		aspiration_loop:
 		for {
+			best_move: Move
+			second_move: Move
 			best_eval := MIN_EVAL
+			second_eval := MIN_EVAL
 
 			sort_scores := score_moves(
-				moves[:], 0, best_move, NULL_MOVE, NIL_PIECE, data
+				moves[:], 0, prev_best, NULL_MOVE, NIL_PIECE, data
 			)
 			defer delete(sort_scores)
 
@@ -152,8 +157,14 @@ root_search :: proc(data: ^SearchData) -> int {
 				if data.aborted do break iterative_deepening
 
 				if eval > best_eval {
+					second_move = best_move
+					second_eval = best_eval
+					best_move = move
+					best_eval = eval
 					update_pv(ply, move, data)
-					best_move, best_eval = move, eval
+				} else if eval > second_eval {
+					second_move = move
+					second_eval = eval
 				}
 			}
 			bufio.writer_reset(&writer, stdout)
@@ -197,20 +208,51 @@ root_search :: proc(data: ^SearchData) -> int {
 			)
 
 			if move_count == 1 {
-				break
+				prev_best = best_move
+				break iterative_deepening
 			}
 
 			// break out of aspiration if in window
 			if alpha < best_eval && best_eval < beta {
+				if prev_best != best_move {
+					best_since_depth = depth
+					prev_best = best_move
+				}
+
+				if !data.infinite && depth - best_since_depth >= 2 && 
+					depth - last_aspiration_fail >= 2 {
+
+					// threshold for stopping early decreases hyperbolically as
+					// allocated time runs out.
+					certainty_threshold := f64(data.allowed_time)/f64(elapsed)
+
+					// Increase certainty if the best move is much better than
+					// the second best
+					eval_delta := f64(best_eval - second_eval) / 100
+					eval_delta *= 2 * math.log2(f64(depth + 3))
+
+					eval_grad := best_eval - prev_eval
+
+					certainty := eval_delta
+
+					if certainty >= certainty_threshold {
+						break iterative_deepening
+					}
+				}
+
 				prev_eval = best_eval
+
 				break
 			}
+
+			last_aspiration_fail = depth
 			alpha = prev_eval - lower_window
 			beta = prev_eval + upper_window
 		}
+
 	}
 
-	move_str := to_string(best_move)
+	move_str := to_string(prev_best)
 	fmt.println("bestmove", move_str)
 	delete(move_str)
 

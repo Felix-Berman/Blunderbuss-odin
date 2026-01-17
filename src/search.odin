@@ -112,14 +112,14 @@ root_search :: proc(data: ^SearchData) -> int {
 			beta = prev_eval + upper_window
 		}
 		
+		sort_scores := score_moves(
+			moves[:], 0, best_move, NULL_MOVE, NIL_PIECE, data
+		)
+		defer delete(sort_scores)
+
 		aspiration_loop:
 		for {
 			best_eval := MIN_EVAL
-
-			sort_scores := score_moves(
-				moves[:], 0, best_move, NULL_MOVE, NIL_PIECE, data
-			)
-			defer delete(sort_scores)
 
 			data.pv_length = {}
 			move_count := 0

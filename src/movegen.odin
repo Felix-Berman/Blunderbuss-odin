@@ -46,7 +46,7 @@ where intrinsics.type_is_numeric(T) {
 }
 
 gen_moves :: proc(position: ^Position, masks: LegalMasks) -> []Move {
-	num_checkers := intrinsics.count_ones(masks.checkers)
+	num_checkers := pop_count(masks.checkers)
 	if num_checkers > 1 {
 		return gen_king_evasions(position, masks)
 	}
@@ -385,7 +385,7 @@ gen_legality_masks :: proc(position: ^Position) -> (masks: LegalMasks) {
 		if blockers == 0 {
 			masks.checkers |= from_bb
 			masks.block_ray |= BETWEEN[king_sq_us][from]
-		} else if intrinsics.count_ones(blockers) == 1 {
+		} else if pop_count(blockers) == 1 {
 			masks.pinned |= blockers
 			masks.pin_rays[lsb(blockers)] = BETWEEN[king_sq_us][from] | from_bb
 		}
@@ -396,7 +396,7 @@ gen_legality_masks :: proc(position: ^Position) -> (masks: LegalMasks) {
 
 	if masks.checkers == 0 {
 		masks.block_ray = FULL_BB
-	} else if intrinsics.count_ones(masks.checkers) == 1 {
+	} else if pop_count(masks.checkers) == 1 {
 		masks.block_ray |= masks.checkers
 	}
 

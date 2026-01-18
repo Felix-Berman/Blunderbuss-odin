@@ -7,9 +7,8 @@ import "core:time"
 import "core:bufio"
 import "core:os"
 import "base:intrinsics"
-import "base:builtin"
 
-MAX_EVAL :: builtin.max(int)
+MAX_EVAL :: max(int)
 MIN_EVAL :: -MAX_EVAL
 MATE_EVAL :: 1_000_000
 MAX_DEPTH :: 64
@@ -50,7 +49,7 @@ SearchData :: struct {
 init_data :: proc(position: Position) -> (data: SearchData) {
 	data.position = position
 	data.max_depth = MAX_DEPTH
-	data.max_nodes = builtin.max(int)
+	data.max_nodes = max(int)
 	data.infinite = true
 	data.start_time = time.tick_now()
 
@@ -361,12 +360,12 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 				if tt_eval >= beta {
 					return tt_eval
 				}
-				alpha = builtin.max(alpha, tt_eval)
+				alpha = max(alpha, tt_eval)
 			case .UpperBound:
 				if tt_eval <= alpha {
 					return tt_eval
 				}
-				beta = builtin.min(beta, tt_eval)
+				beta = min(beta, tt_eval)
 			}
 
 			if alpha >= beta {
@@ -425,8 +424,8 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		r := 0
 		if !is_pv && depth > 2 && move_count > 2 {
 			r = cast(int)math.floor(math.ln(f32(depth)) * math.ln(f32(move_count)))
-			r = builtin.max(r, 1)
-			r = builtin.min(r, depth - 2)
+			r = max(r, 1)
+			r = min(r, depth - 2)
 		}
 
 		make_move(&data.position, move)
@@ -518,7 +517,7 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 
 	data.nodes += 1
 	if ply >= MAX_DEPTH {
-		eval, _ := evaluate(&data.position)
+		eval := evaluate(&data.position)
 		return eval
 	}
 
@@ -533,7 +532,7 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 	masks := gen_legality_masks(&data.position)
 	in_check := is_in_check(&data.position, masks.danger)
 	alpha := alpha
-	standing_pat, _ := evaluate(&data.position)
+	standing_pat := evaluate(&data.position)
 	best_move: Move
 
 	prev_piece := NIL_PIECE
@@ -747,7 +746,7 @@ score_moves :: proc(
 
 		for killer in data.killer_moves[ply] {
 			if move == killer {
-				scores[i] = builtin.max(scores[i], KILLER_SCORE)
+				scores[i] = max(scores[i], KILLER_SCORE)
 			}
 		}
 
@@ -924,7 +923,7 @@ recursive_see :: proc(position: ^Position, to: int) -> (value: int) {
 
 	move := build_move(from, to, {.Capture})
 	make_move(position, move)
-	value += builtin.max(0, victim_val - recursive_see(position, to))
+	value += max(0, victim_val - recursive_see(position, to))
 	unmake_move(position, move)
 
 	return
@@ -974,5 +973,5 @@ update_history :: proc(prev_piece: Piece, prev_move, move: Move, bonus: int) {
 
 	// history gravity:
 	// entries with higher scores recieve a smaller fraction of bonus
-	history^ += bonus - builtin.abs(bonus) * history^ / MAX_HISTORY
+	history^ += bonus - abs(bonus) * history^ / MAX_HISTORY
 }	

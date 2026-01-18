@@ -108,3 +108,7 @@ square_colour :: proc(sq: int) -> Colour {
 		return .Black
 	}
 }
+
+pop_count :: proc(bb: u64) -> int {
+	return int(intrinsics.count_ones(bb))
+}

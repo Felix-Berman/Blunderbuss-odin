@@ -100,3 +100,11 @@ mirror_horizontally :: proc(bitboard: u64) -> u64 {
     bb = ((bb >> 4) & k4) + 16 * (bb & k4)
     return bb
 }
+
+square_colour :: proc(sq: int) -> Colour {
+	if (sq % 8 + sq / 8) % 2 == 0 {
+		return .White
+	} else {
+		return .Black
+	}
+}

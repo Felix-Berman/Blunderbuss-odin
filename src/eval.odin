@@ -59,174 +59,146 @@ wdl :: proc(eval: int, phase: int) -> f64 {
 
 
 evaluate :: proc(position: ^Position) -> (int, int) {
-	mg_material: [Colour]int
-	eg_material: [Colour]int
+	mg: [Colour]int
+	eg: [Colour]int
 	us := position.turn
 	them := toggle(us)
+	occ := occupied(position)
 	phase := 0
 
-	bishop_count: [Colour]int
+	for us in Colour {
+		them := toggle(us)
+		enemy_pawns := position.pieces[them][.Pawn]
+		pawn_controlled := pawn_attacks(them, enemy_pawns)
+		bishop_pair: bit_set[Colour]
 
-	for bbs, side in position.pieces {
-		for bb, piece in bbs {
-			bb := bb
-			for bb > 0 {
-				sq := pop_lsb(&bb)
-				if side == .White {
-					sq ~= 56
+		for bb, piece in position.pieces[us] {
+			from_bb := bb
+			for from_bb > 0 {
+				from := pop_lsb(&from_bb)
+
+				// count material
+				lookup_sq := from
+				if us == .White {
+					lookup_sq ~= 56 // PSQT defined from black perspective
 				}
 
-				mg_material[side] += piece_value[piece] + mg_piece_sq_tbl[piece][sq]
-				eg_material[side] += piece_value[piece] + eg_piece_sq_tbl[piece][sq]
+				mg[us] += piece_value[piece] + mg_piece_sq_tbl[piece][lookup_sq]
+				eg[us] += piece_value[piece] + eg_piece_sq_tbl[piece][lookup_sq]
 				phase += piece_phase[piece]
 
-				if piece == .Bishop {
-					bishop_count[side] += 1
+				to_bb: u64
+				switch piece {
+				case .Pawn:
+					continue
+				case .Knight:
+					to_bb = KNIGHT_TABLE[from]
+				case .Bishop:
+					to_bb = magic_bishop_moves(from, occ)
+					bishop_pair += {square_colour(from)}
+				case .Rook:
+					to_bb = magic_rook_moves(from, occ)
+				case .Queen:
+					to_bb = magic_queen_moves(from, occ)
+				case .King:
+					to_bb = KING_TABLE[from]
 				}
+
+				// count mobility
+				to_bb &~= position.occupancy[us] | pawn_controlled
+				mobility := int(intrinsics.count_ones(to_bb))
+
+				mg[us] += MG_MOBILITY_WEIGHT[piece] * mobility
+				eg[us] += EG_MOBILITY_WEIGHT[piece] * mobility
 			}
 		}
+
+		if bishop_pair == {.White, .Black} {
+			mg[us] += MG_BISHOP_PAIR_WEIGHT
+			eg[us] += EG_BISHOP_PAIR_WEIGHT
+		}
 	}
+
+	eval_pawn_structure(position, &mg, &eg)
 
 	// in case of promotion
 	if phase > 24 {
 		phase = 24
 	}
 
-	mg_eval := mg_material[us] - mg_material[them]
-	eg_eval := eg_material[us] - eg_material[them]
-
-	pawns_us := position.pieces[us][.Pawn]
-	pawns_them := position.pieces[them][.Pawn]
-	mg_pawn_us, eg_pawn_us := pawn_structure(us, pawns_us, pawns_them)
-	mg_pawn_them, eg_pawn_them := pawn_structure(them, pawns_them, pawns_us)
-
-	mg_eval += mg_pawn_us - mg_pawn_them
-	eg_eval += eg_pawn_us - eg_pawn_them
-
-	if bishop_count[us] >= 2 {
-		mg_eval += MG_BISHOP_PAIR_WEIGHT
-		eg_eval += EG_BISHOP_PAIR_WEIGHT
-	}
-	if bishop_count[them] >= 2 {
-		mg_eval -= MG_BISHOP_PAIR_WEIGHT
-		eg_eval -= EG_BISHOP_PAIR_WEIGHT
-	}
-
-	mg_mobility_us, eg_mobility_us := mobility(position, us)
-	mg_mobility_them, eg_mobility_them := mobility(position, them)
-	mg_eval += mg_mobility_us - mg_mobility_them
-	eg_eval += eg_mobility_us - eg_mobility_them
+	mg_eval := mg[us] - mg[them]
+	eg_eval := eg[us] - eg[them]
 
 	return (mg_eval * phase + eg_eval * (24 - phase)) / 24, phase
 }
 
-mobility :: proc(position: ^Position, us: Colour) -> (mg, eg: int) {
-	them := toggle(us)
-	occ := occupied(position)
+eval_pawn_structure :: proc(position: ^Position, mg, eg: ^[Colour]int) {
+	for us in Colour {
+		them := toggle(us)
+		pawns_us := position.pieces[us][.Pawn]
+		pawns_them := position.pieces[them][.Pawn]
+		file_count: [8]int
+		is_isolated: [8]bool
 
-	enemy_pawns := position.pieces[them][.Pawn]
-	pawn_controlled := pawn_attacks(them, enemy_pawns)
+		for pawn_iter := pawns_us; pawn_iter > 0; {
+			sq := pop_lsb(&pawn_iter)
 
-	for bb, piece in position.pieces[us] {
-		from_bb := bb
+			rank_idx := sq / 8
+			file_idx := sq % 8
+			file_count[file_idx] += 1
+			
+			file := SQ_MASKS[sq].file
+			file_left := (file << 1) &~ H_FILE
+			file_right := (file >> 1) &~ A_FILE
 
-		for from_bb > 0 {
-			from := pop_lsb(&from_bb)
-
-			to_bb: u64
-			switch piece {
-			case .Pawn:
-				continue
-			case .Knight:
-				to_bb = KNIGHT_TABLE[from]
-			case .Bishop:
-				to_bb = magic_bishop_moves(from, occ)
-			case .Rook:
-				to_bb = magic_rook_moves(from, occ)
-			case .Queen:
-				to_bb = magic_queen_moves(from, occ)
-			case .King:
-				to_bb = KING_TABLE[from]
+			ahead_mask := file | file_left | file_right
+			behind_mask := file_left | file_right
+			pushed_distance: int
+			sentry_mask: u64
+			if us == .White {
+				ahead_mask <<= uint(8 * rank_idx + 8)
+				behind_mask >>= uint(8 * (7 - rank_idx))
+				pushed_distance = rank_idx
+				sentry_mask = bitboard(sq + 17) | bitboard(sq + 15)
+			} else {
+				pushed_distance = 7 - rank_idx
+				ahead_mask >>= uint(8 * pushed_distance + 8)
+				behind_mask >>= uint(8 * rank_idx)
+				sentry_mask = bitboard(sq - 17) | bitboard(sq - 15)
 			}
 
-			to_bb &~= position.occupancy[us] | pawn_controlled
-			mobility := int(intrinsics.count_ones(to_bb))
+			if (file_left | file_right) & pawns_us == 0 {
+				is_isolated[file_idx] = true
+			}
 
-			mg += MG_MOBILITY_WEIGHT[piece] * mobility
-			eg += EG_MOBILITY_WEIGHT[piece] * mobility
+			if ahead_mask & pawns_them == 0 {
+				mg[us] += pushed_distance * MG_PASSED_PAWN_WEIGHT
+				eg[us] += pushed_distance * EG_PASSED_PAWN_WEIGHT
+			}
+
+			if behind_mask & pawns_us == 0 && sentry_mask & pawns_them != 0 {
+				mg[us] -= MG_BACKWARD_PAWN_PENALTY
+				eg[us] -= EG_BACKWARD_PAWN_PENALTY
+			}
 		}
 
-	}
+		for file in 0..<8 {
+			if is_isolated[file] {
+				mg[us] -= MG_ISOLATED_PAWN_PENALTY
+				eg[us] -= EG_ISOLATED_PAWN_PENALTY
+			}
 
-	return
-}
+			count := file_count[file]
+			if count <= 1 do continue
 
-pawn_structure :: proc(us: Colour, pawns_us, pawns_them: u64) -> (mg, eg: int) {
-	them := toggle(us)
-	pawn_iter := pawns_us
-	file_count: [8]int
-	is_isolated: [8]bool
-
-	for pawn_iter > 0 {
-		sq := pop_lsb(&pawn_iter)
-
-		rank_idx := sq / 8
-		file_idx := sq % 8
-		file_count[file_idx] += 1
-		
-		file := SQ_MASKS[sq].file
-		file_left := (file << 1) &~ H_FILE
-		file_right := (file >> 1) &~ A_FILE
-
-		ahead_mask := file | file_left | file_right
-		behind_mask := file_left | file_right
-		pushed_distance: int
-		sentry_mask: u64
-		if us == .White {
-			ahead_mask <<= uint(8 * rank_idx + 8)
-			behind_mask >>= uint(8 * (7 - rank_idx))
-			pushed_distance = rank_idx
-			sentry_mask = bitboard(sq + 17) | bitboard(sq + 15)
-		} else {
-			pushed_distance = 7 - rank_idx
-			ahead_mask >>= uint(8 * pushed_distance + 8)
-			behind_mask >>= uint(8 * rank_idx)
-			sentry_mask = bitboard(sq - 17) | bitboard(sq - 15)
-		}
-
-		if (file_left | file_right) & pawns_us == 0 {
-			is_isolated[file_idx] = true
-		}
-
-		if ahead_mask & pawns_them == 0 {
-			mg += pushed_distance * MG_PASSED_PAWN_WEIGHT
-			eg += pushed_distance * EG_PASSED_PAWN_WEIGHT
-		}
-
-		if behind_mask & pawns_us == 0 && sentry_mask & pawns_them != 0 {
-			mg -= MG_BACKWARD_PAWN_PENALTY
-			eg -= EG_BACKWARD_PAWN_PENALTY
+			mg[us] -= (count - 1) * MG_DOUBLED_PAWN_WEIGHT
+			eg[us] -= (count - 1) * EG_DOUBLED_PAWN_WEIGHT
+			if count >= 3 {
+				mg[us] -= MG_TRIPLED_PAWN_PENALTY
+				eg[us] -= EG_TRIPLED_PAWN_PENALTY
+			}
 		}
 	}
-
-	for file in 0..<8 {
-		if is_isolated[file] {
-			mg -= MG_ISOLATED_PAWN_PENALTY
-			eg -= EG_ISOLATED_PAWN_PENALTY
-		}
-
-		count := file_count[file]
-		if count <= 1 do continue
-
-		mg -= (count - 1) * MG_DOUBLED_PAWN_WEIGHT
-		eg -= (count - 1) * EG_DOUBLED_PAWN_WEIGHT
-		if count >= 3 {
-			mg -= MG_TRIPLED_PAWN_PENALTY
-			eg -= EG_TRIPLED_PAWN_PENALTY
-		}
-	}
-
-	return
 }
 
 mg_piece_sq_tbl: [PieceType][64]int = {

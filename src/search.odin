@@ -516,6 +516,11 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 	}
 
 	data.nodes += 1
+
+	if data.position.halfmove_clk >= 100 || fast_repetition(data) {
+		return 0
+	}
+
 	if ply >= MAX_DEPTH {
 		eval := evaluate(&data.position)
 		return eval
@@ -532,8 +537,9 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 	masks := gen_legality_masks(&data.position)
 	in_check := is_in_check(&data.position, masks.danger)
 	alpha := alpha
-	standing_pat := evaluate(&data.position)
 	best_move: Move
+	best_eval := MIN_EVAL
+	standing_pat: int
 
 	prev_piece := NIL_PIECE
 	if prev_move != NULL_MOVE {
@@ -543,6 +549,7 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 	}
 
 	if !in_check {
+		standing_pat = evaluate(&data.position)
 		if standing_pat >= beta {
 			return standing_pat
 		}
@@ -561,6 +568,8 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 		if standing_pat + big_delta < alpha {
 			return standing_pat
 		}
+
+		best_eval = standing_pat
 	}
 
 	moves := gen_moves(&data.position, masks)
@@ -573,7 +582,6 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 		delete(sort_scores)
 	}
 
-	best_eval := standing_pat
 	move_count := 0
 	for i in 0..<len(moves) {
 		move := pick_move(moves[i:], sort_scores[i:])
@@ -795,6 +803,27 @@ threefold_repetition :: proc(data: ^SearchData, search_ply: int) -> bool {
 	}
 
 	return false
+}
+
+fast_repetition :: proc(data: ^SearchData) -> bool {
+    ply_to_search := data.position.ply - data.position.last_irreversible_ply
+
+    history_len := len(data.position.history)
+    current_hash := data.position.hash
+
+    if ply_to_search >= 4 && history_len >= 4 {
+        if data.position.history[history_len - 4].hash == current_hash {
+            return true
+        }
+    }
+
+    if ply_to_search >= 6 && history_len >= 6 {
+        if data.position.history[history_len - 6].hash == current_hash {
+            return true
+        }
+    }
+
+    return false
 }
 
 see :: proc(position: ^Position, move: Move) -> int {

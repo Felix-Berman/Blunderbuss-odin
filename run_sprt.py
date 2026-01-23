@@ -7,6 +7,7 @@ import atexit
 from pathlib import Path
 
 CWD = Path(os.getcwd())
+BUILD_CMD = "odin build src -o:speed -define:PEXT=true"
 ENGINE_DIR = CWD / 'versions'
 LOG_DIR = CWD / 'sprt_log'
 FASTCHESS_CMD = "fastchess" # adjust if not on PATH
@@ -33,7 +34,7 @@ def main():
 
     log(f'Building {feature_name}_{feature_id} from {feature_worktree}')
     path_feature = ENGINE_DIR / f'{feature_name}_{feature_id}.exe'
-    run_command(f'odin build src -o:speed -out:{path_feature}',
+    run_command(f'{BUILD_CMD} -out:{path_feature}',
                 cwd=feature_worktree)
 
     base_worktree = CWD / "../blunderbuss_temp_base"
@@ -44,7 +45,7 @@ def main():
     base_name = f'{args.base}_{base_hash}'
     log(f'Building {base_name} from {base_worktree}')
     path_base = ENGINE_DIR / f'{base_name}.exe'
-    run_command(f'odin build src -o:speed -out:{path_base}', cwd=base_worktree)
+    run_command(f'{BUILD_CMD} -out:{path_base}', cwd=base_worktree)
 
     log("Starting SPRT Test with Fastchess...")
 

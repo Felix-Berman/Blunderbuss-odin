@@ -322,6 +322,10 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		return 0
 	}
 
+	if ply == MAX_DEPTH {
+		return evaluate(&data.position)
+	}
+
 	if depth == 0 {
 		return q_search(alpha, beta, ply, prev_move, data)
 	}
@@ -331,7 +335,9 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 	depth := depth
 	best_eval := MIN_EVAL
 	best_move := NULL_MOVE
+	tt_depth := depth
 	eval_type := EvalType.UpperBound
+	is_pv := beta - alpha != 1 // otherwise we're in a null window
 
 	prev_piece := NIL_PIECE
 	if prev_move != NULL_MOVE {
@@ -385,6 +391,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		delete(rejected_quiets)
 	}
 
+	// null move pruning
 	if !is_in_check(&data.position, masks.danger) && !is_pawn_endgame(data.position) {
 		null_depth := depth - NULL_MOVE_REDUCTION - 1
 
@@ -406,8 +413,6 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		}
 	}
 
-	is_pv := beta - alpha > 1 // otherwise we're in a null window
-
 	move_count := 0
 	for i in 0..<len(moves) {
 		move := pick_move(moves[i:], sort_scores[i:])
@@ -421,6 +426,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 			defer delete(move_str)
 		}
 
+		// late move reduction (LMR)
 		r := 0
 		if !is_pv && depth > 2 && move_count > 2 {
 			r = cast(int)math.floor(math.ln(f32(depth)) * math.ln(f32(move_count)))
@@ -430,11 +436,24 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 
 		make_move(&data.position, move)
 		eval: int
+		// search first move with full window
 		if move_count == 1 {
 			eval = -negamax(-beta, -alpha, depth - 1, ply + 1, move, data)
 		} else {
+			// otherwise apply null window and reduce depth
 			eval = -negamax(-alpha - 1, -alpha, depth - r - 1, ply + 1, move, data)
+
+			// repeat with full depth
+			if eval > alpha && r > 0 {
+				r = 0
+				eval = -negamax(
+					-alpha - 1, -alpha, depth - 1, ply + 1, move, data
+				)
+			}
+
+			// repeat the full search if we can't perform a cutoff
 			if eval > alpha && eval < beta && is_pv {
+				r = 0
 				eval = -negamax(-beta, -alpha, depth - 1, ply + 1, move, data)
 			}
 		}
@@ -445,6 +464,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		if eval > best_eval {
 			best_eval = eval
 			best_move = move
+			tt_depth = depth - r
 
 			if eval >= beta {
 				if !is_dynamic(flags) {
@@ -490,7 +510,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 
 	ttable_insert(&t_table, TTableEntry{
 		data.position.hash,
-		depth,
+		tt_depth,
 		tt_eval,
 		eval_type,
 		best_move,
@@ -522,8 +542,7 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 	}
 
 	if ply >= MAX_DEPTH {
-		eval := evaluate(&data.position)
-		return eval
+		return evaluate(&data.position)
 	}
 
 	if ply > data.seldepth {
@@ -609,7 +628,7 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 		}
 
 		// delta pruning
-		if !in_check && .Capture in flags {
+		if !in_check && .Capture in flags && .Promotion not_in flags {
 			captured_val: int
 			if flags == EP_CAPTURE {
 				captured_val = piece_value[.Pawn]
@@ -618,20 +637,6 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 				assert(ok, "no piece on captured square")
 				captured_val = piece_value[captured_piece.type]
 			}
-
-			if .Promotion in flags {
-				switch flags &~ {.Capture} {
-				case KNIGHT_PROMOTION:
-					captured_val += piece_value[.Knight]
-				case BISHOP_PROMOTION:
-					captured_val += piece_value[.Bishop]
-				case ROOK_PROMOTION:
-					captured_val += piece_value[.Rook]
-				case QUEEN_PROMOTION:
-					captured_val += piece_value[.Queen]
-				}
-				captured_val -= piece_value[.Pawn]
-			}
 			
 			if standing_pat + captured_val + DELTA_MARGIN < alpha {
 				continue
@@ -639,7 +644,7 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 
 			// static exchange evaluation (don't consider trades losing material)
 			// see value already computed during sort scoring
-			if .Promotion not_in flags && sort_scores[i] < 0 {
+			if sort_scores[i] < 0 {
 				continue
 			}
 		}
@@ -672,9 +677,10 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 }
 
 update_pv :: proc(ply: int, move: Move, data: ^SearchData) {
+	assert(ply < MAX_DEPTH)
 	data.pv_table[ply][ply] = move
 
-	if ply >= 63 {
+	if ply >= MAX_DEPTH - 1 {
 		data.pv_length[ply] = 0
 		return
 	}
@@ -865,8 +871,8 @@ see :: proc(position: ^Position, move: Move) -> int {
 		gain[depth] = piece_value[victim_type] - gain[depth - 1]
 
 		// include revealed x-ray attacks
-		bishop_attacks := bishop_moves(to, occ)
-		rook_attacks := rook_moves(to, occ)
+		bishop_attacks := magic_bishop_moves(to, occ)
+		rook_attacks := magic_rook_moves(to, occ)
 		attackers[.White] |= bishop_attacks & position.pieces[.White][.Bishop]
 		attackers[.Black] |= bishop_attacks & position.pieces[.Black][.Bishop]
 		attackers[.White] |= bishop_attacks & position.pieces[.White][.Queen]
@@ -988,6 +994,8 @@ recursive_see_root :: proc(position: ^Position, move: Move) -> (value: int) {
 }
 
 store_killer :: proc(move: Move, ply: int, data: ^SearchData) {
+	assert(ply < MAX_DEPTH)
+
 	if data.killer_moves[ply][0] != move {
 		data.killer_moves[ply][1] = data.killer_moves[ply][0]
 		data.killer_moves[ply][0] = move

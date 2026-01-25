@@ -380,6 +380,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		}
 	}
 
+
 	us := data.position.turn
 	masks := gen_legality_masks(&data.position)
 	moves := gen_moves(&data.position, masks)
@@ -391,8 +392,17 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		delete(rejected_quiets)
 	}
 
+	// reverse futility pruning
+	// skip when in check, pv node, or there is a tt move
+	eval := evaluate(&data.position)
+	margin := 150 * depth
+	in_check := is_in_check(&data.position, masks.danger)
+	if !in_check && !is_pv && best_move == NULL_MOVE && eval >= beta + margin {
+		return eval
+	}
+
 	// null move pruning
-	if !is_in_check(&data.position, masks.danger) && !is_pawn_endgame(data.position) {
+	if !in_check && !is_pawn_endgame(data.position) {
 		null_depth := depth - NULL_MOVE_REDUCTION - 1
 
 		if null_depth >= 0 {

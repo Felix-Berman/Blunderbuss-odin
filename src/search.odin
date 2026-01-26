@@ -37,6 +37,8 @@ FUTILITY_MARGIN := [MAX_DEPTH]int{
 	94180, 97570, 101020, 104530, 108100, 111730, 115420, 119170,
 }
 
+LMR_TABLE: [MAX_DEPTH][MAX_DEPTH]int
+
 // global tables
 t_table: TTable
 continuation_history: [PieceType][64][64][64]int
@@ -460,7 +462,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		// late move reduction (LMR)
 		r := 0
 		if !is_pv && depth > 2 && move_count > 2 {
-			r = cast(int)math.floor(math.ln(f32(depth)) * math.ln(f32(move_count)))
+			r = LMR_TABLE[depth][move_count]
 			r = max(r, 1)
 			r = min(r, depth - 2)
 		}
@@ -1043,3 +1045,11 @@ update_history :: proc(prev_piece: Piece, prev_move, move: Move, bonus: int) {
 	// entries with higher scores recieve a smaller fraction of bonus
 	history^ += bonus - abs(bonus) * history^ / MAX_HISTORY
 }	
+
+init_lmr :: proc() {
+	for d in 0..<MAX_DEPTH {
+		for m in 0..<MAX_DEPTH {
+			LMR_TABLE[d][m] = int(math.ln(f32(d)) * math.ln(f32(m)))
+		}
+	}
+}

@@ -25,6 +25,18 @@ MAX_HISTORY :: 20_000
 HISTORY_BONUS :: 400
 PROMOTION_SCORE :: 800
 
+// probably excessive beyond depth 4 but we'll find out after tuning
+FUTILITY_MARGIN := [MAX_DEPTH]int{
+	100, 130, 220, 370, 580, 850, 1180, 1570,
+	2020, 2530, 3100, 3730, 4420, 5170, 5980, 6850,
+	7780, 8770, 9820, 10930, 12100, 13330, 14620, 15970,
+	17380, 18850, 20380, 21970, 23620, 25330, 27100, 28930,
+	30820, 32770, 34780, 36850, 38980, 41170, 43420, 45730,
+	48100, 50530, 53020, 55570, 58180, 60850, 63580, 66370,
+	69220, 72130, 75100, 78130, 81220, 84370, 87580, 90850,
+	94180, 97570, 101020, 104530, 108100, 111730, 115420, 119170,
+}
+
 // global tables
 t_table: TTable
 continuation_history: [PieceType][64][64][64]int
@@ -380,25 +392,16 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		}
 	}
 
-
 	us := data.position.turn
 	masks := gen_legality_masks(&data.position)
-	moves := gen_moves(&data.position, masks)
-	sort_scores := score_moves(moves[:], ply, best_move, prev_move, prev_piece, data)
-	rejected_quiets := make([dynamic]Move, 0, len(moves))
-	defer {
-		delete(moves)
-		delete(sort_scores)
-		delete(rejected_quiets)
-	}
 
 	// reverse futility pruning
 	// skip when in check, pv node, or there is a tt move
-	eval := evaluate(&data.position)
+	standing_pat := evaluate(&data.position)
 	margin := 150 * depth
 	in_check := is_in_check(&data.position, masks.danger)
-	if !in_check && !is_pv && best_move == NULL_MOVE && eval >= beta + margin {
-		return eval
+	if !in_check && !is_pv && best_move == NULL_MOVE && standing_pat >= beta + margin {
+		return standing_pat
 	}
 
 	// null move pruning
@@ -423,6 +426,15 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		}
 	}
 
+	moves := gen_moves(&data.position, masks)
+	sort_scores := score_moves(moves[:], ply, best_move, prev_move, prev_piece, data)
+	rejected_quiets := make([dynamic]Move, 0, len(moves))
+	defer {
+		delete(moves)
+		delete(sort_scores)
+		delete(rejected_quiets)
+	}
+
 	move_count := 0
 	for i in 0..<len(moves) {
 		move := pick_move(moves[i:], sort_scores[i:])
@@ -434,6 +446,15 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		when ODIN_DEBUG {
 			move_str := to_string(move)
 			defer delete(move_str)
+		}
+
+		// futility pruning
+		if !in_check && !is_pv && !is_dynamic(flags) &&
+			!gives_check(&data.position, move, masks) {
+			margin := FUTILITY_MARGIN[depth - 1]
+			if standing_pat + margin < alpha {
+				continue
+			}
 		}
 
 		// late move reduction (LMR)

@@ -33,7 +33,7 @@ get_flags :: proc(move: Move) -> MoveFlagSet {
 }
 
 is_dynamic :: proc(flags: MoveFlagSet) -> bool {
-	return flags & {.Capture, .Promotion} != QUIET
+	return .Capture in flags || .Promotion in flags
 }
 
 
@@ -373,7 +373,8 @@ gen_legality_masks :: proc(position: ^Position) -> (masks: LegalMasks) {
 	rooklike_them := pieces[them][.Rook] | pieces[them][.Queen]
 	occ_us := position.occupancy[us]
 	occ_them := position.occupancy[them]
-	occ_kingless := occupied(position) &~ pieces[us][.King]
+	occ := occ_us | occ_them
+	occ_kingless := occ &~ pieces[us][.King]
 
 	attackers := magic_bishop_moves(king_sq_us, occ_them) & bishoplike_them
 	attackers |= magic_rook_moves(king_sq_us, occ_them) & rooklike_them
@@ -381,12 +382,12 @@ gen_legality_masks :: proc(position: ^Position) -> (masks: LegalMasks) {
 	for attackers > 0 {
 		from := pop_lsb(&attackers)
 		from_bb := bitboard(from)
-		blockers := BETWEEN[king_sq_us][from] & occ_us
+		blockers := BETWEEN[king_sq_us][from] & occ
 		if blockers == 0 {
 			masks.checkers |= from_bb
 			masks.block_ray |= BETWEEN[king_sq_us][from]
 		} else if pop_count(blockers) == 1 {
-			masks.pinned |= blockers
+			masks.blockers |= blockers
 			masks.pin_rays[lsb(blockers)] = BETWEEN[king_sq_us][from] | from_bb
 		}
 	}
@@ -423,7 +424,7 @@ is_legal :: proc(position: ^Position, masks: LegalMasks, move: Move) -> bool {
 	flags := get_flags(move)
 
 	// pinned piece must move along pin ray
-	if from_bb & masks.pinned != 0 {
+	if from_bb & masks.blockers != 0 {
 		return to_bb & masks.pin_rays[move.from] != 0
 	}
 
@@ -441,6 +442,43 @@ is_legal :: proc(position: ^Position, masks: LegalMasks, move: Move) -> bool {
 
 
 	return true
+}
+
+// see if a move gives check before making it
+gives_check :: proc(position: ^Position, move: Move, masks: LegalMasks) -> bool {
+	// discovered check
+	if bitboard(move.from) & masks.blockers != 0 {
+		return true
+	}
+
+	attacks: u64
+	them := toggle(position.turn)
+	occ := occupied(position)
+	to := int(move.to)
+	to_bb := bitboard(move.to)
+	piece, ok := piece_on(position, move.from)
+	assert(ok, "no piece found on move.from")
+
+	switch piece.type {
+	case .Pawn:
+		attacks = pawn_attacks(piece.colour, to_bb)
+	case .Knight:
+		attacks = KNIGHT_TABLE[move.to]
+	case .Bishop:
+		attacks = magic_bishop_moves(to, occ)
+	case .Rook:
+		attacks = magic_rook_moves(to, occ)
+	case .Queen:
+		attacks = magic_queen_moves(to, occ)
+	case .King:
+		return false
+	}
+
+	if attacks & position.pieces[them][.King] != 0 {
+		return true
+	}
+
+	return false
 }
 
 attackers_to :: proc(position: ^Position, sq: int) -> (attackers: [Colour]u64) {

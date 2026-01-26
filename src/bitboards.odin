@@ -64,7 +64,7 @@ SqMasks :: struct {
 
 LegalMasks :: struct {
 	checkers: u64,
-	pinned: u64,
+	blockers: u64,
 	block_ray: u64,
 	pin_rays: [64]u64,
 	danger: u64,

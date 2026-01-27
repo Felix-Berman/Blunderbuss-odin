@@ -12,6 +12,7 @@ ENGINE_DIR = CWD / 'versions'
 LOG_DIR = CWD / 'sprt_log'
 FASTCHESS_CMD = "fastchess" # adjust if not on PATH
 OPENING_BOOK = "openings-16ply-100k.pgn"
+HASH = 512 #MB
 
 description = "SPRT test automation for the Blunderbuss engine using fastchess.\
     By default it will compare the current worktree to the HEAD of main."
@@ -58,7 +59,7 @@ def main():
         FASTCHESS_CMD,
         "-engine", f"name={feature_name}", f"cmd={path_feature}",
         "-engine", f"name={base_name}", f"cmd={path_base}",
-        "-each", f"tc=10+0.1",
+        "-each", f"tc=10+0.1", f"option.Hash={HASH}",
         "-sprt", f"elo0=0 elo1=10 alpha=0.05 beta=0.05",
         "-rounds", "4000",
         "-games", "2", # Play pairs (white/black)

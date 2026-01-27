@@ -396,36 +396,44 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 
 	us := data.position.turn
 	masks := gen_legality_masks(&data.position)
-
-	// reverse futility pruning
-	// skip when in check, pv node, or there is a tt move
-	standing_pat := evaluate(&data.position)
-	margin := 150 * depth
 	in_check := is_in_check(&data.position, masks.danger)
-	if !in_check && !is_pv && best_move == NULL_MOVE && standing_pat >= beta + margin {
-		return standing_pat
-	}
+	standing_pat := MIN_EVAL
 
-	// null move pruning
-	if !in_check && !is_pawn_endgame(data.position) {
-		null_depth := depth - NULL_MOVE_REDUCTION - 1
+	if !in_check {
+		// reverse futility pruning
+		// skip when in check, pv node, or there is a tt move
+		standing_pat = evaluate(&data.position)
+		margin := 150 * depth
+		if !is_pv && best_move == NULL_MOVE && standing_pat >= beta + margin {
+			return standing_pat
+		}
 
-		if null_depth >= 0 {
-			make_null_move(&data.position)
-			eval := -negamax(-beta, -beta + 1, null_depth, ply + 1, NULL_MOVE, data)
-			unmake_null_move(&data.position)
+		// null move pruning
+		if !is_pawn_endgame(data.position) {
+			null_depth := depth - NULL_MOVE_REDUCTION - 1
 
-			if eval >= beta {
-				ttable_insert(&t_table, TTableEntry{
-					data.position.hash,
-					null_depth,
-					eval,
-					.LowerBound,
-					NULL_MOVE,
-				})
-				return eval
+			if null_depth >= 0 {
+				make_null_move(&data.position)
+				eval := -negamax(-beta, -beta + 1, null_depth, ply + 1, NULL_MOVE, data)
+				unmake_null_move(&data.position)
+
+				if eval >= beta {
+					ttable_insert(&t_table, TTableEntry{
+						data.position.hash,
+						null_depth,
+						eval,
+						.LowerBound,
+						NULL_MOVE,
+					})
+					return eval
+				}
 			}
 		}
+	}
+
+	// internal iterative reduction (IIR)
+	if depth > 5 && best_move == NULL_MOVE {
+		depth -= 2
 	}
 
 	moves := gen_moves(&data.position, masks)

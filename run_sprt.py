@@ -52,6 +52,7 @@ def main():
 
     pgn_file = LOG_DIR / f"{args.test_name}_{timestamp}.pgn"
     log_file = LOG_DIR / f"{args.test_name}_{timestamp}.log"
+    config_file = LOG_DIR / f"{args.test_name}_{timestamp}.json"
 
     base_name = f'{args.base}({base_hash})'
 
@@ -70,7 +71,7 @@ def main():
         "-recover", # Restart engine on crash
         "-pgnout", f"file={pgn_file}", "notation=lan",
         "-event", args.test_name,
-        "-config", f"outname={LOG_DIR}/config.json",
+        "-config", f"outname={config_file}",
         "-log", f"file={log_file}", "level=warn",
         "-use-affinity", "0,2,4,6,8,10,12,14", # P cores on an 8P, 4E core intel cpu
     ]

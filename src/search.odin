@@ -21,6 +21,7 @@ NULL_MOVE_REDUCTION :: 3
 TT_MOVE_SCORE :: 100_000
 CAPTURE_SCORE :: 50_000
 KILLER_SCORE :: 600
+CHECK_SCORE :: 20_000
 MAX_HISTORY :: 20_000
 HISTORY_BONUS :: 400
 PROMOTION_SCORE :: 800
@@ -121,7 +122,7 @@ root_search :: proc(data: ^SearchData) -> int {
 	iterative_deepening:
 	for depth in 1..=data.max_depth {
 		depth_timer := time.tick_now()
-		if found_mate do break
+		// if found_mate do break
 
 		upper_window := ASPIRATION_WINDOW
 		lower_window := ASPIRATION_WINDOW
@@ -194,26 +195,30 @@ root_search :: proc(data: ^SearchData) -> int {
 			eval_bound := ""
 			if best_eval >= beta {
 				upper_window *= 2
-				eval_bound = " lowerbound"
+				eval_bound = "lowerbound "
 			} else if best_eval <= alpha {
 				lower_window *= 2
-				eval_bound = " upperbound"
+				eval_bound = "upperbound "
 			}
 
 			eval_type: string
 			print_eval := best_eval
-			if best_eval > MATE_EVAL - depth {
+			if best_eval >= MATE_EVAL - MAX_DEPTH {
 				ply_to_mate := MATE_EVAL - best_eval
-				print_eval = (ply_to_mate + 1) / 2
+				mate_eval := mate_search(
+					best_eval, MATE_EVAL, ply_to_mate, 0, NULL_MOVE, data)
+				print_eval = (MATE_EVAL - mate_eval + 1) / 2
 				eval_type = "mate"
 				found_mate = true
-			} else if best_eval < -MATE_EVAL + depth {
+			} else if best_eval <= -MATE_EVAL + MAX_DEPTH {
 				ply_to_mate := MATE_EVAL + best_eval
-				print_eval = -ply_to_mate / 2
+				mate_eval := mate_search(
+					-MATE_EVAL, best_eval, ply_to_mate, 0, NULL_MOVE, data)
+				print_eval = - (MATE_EVAL - mate_eval) / 2
 				eval_type = "mate"
 				found_mate = true
 			} else {
-				eval_type = "cp"
+				eval_type = fmt.tprintf("{}cp", eval_bound)
 			}
 
 			elapsed := time.tick_since(data.start_time)
@@ -223,85 +228,86 @@ root_search :: proc(data: ^SearchData) -> int {
 			pv_str := to_string(data.pv_table[0][:len], context.temp_allocator)
 			fmt.printfln(
 				"info depth %d seldepth %d nodes %d time %d nps %d " +
-				"hashfull %d score %s %d%s pv %s",
+				"hashfull %d score %s %d pv %s",
 				depth, data.seldepth, data.nodes, elapsed_ms, int(nps),
-				hashfull(t_table), eval_type, print_eval, eval_bound, pv_str
+				hashfull(t_table), eval_type, print_eval, pv_str
 			)
 
-			if move_count == 1 {
+			if move_count == 1 || found_mate {
 				prev_best = best_move
 				break iterative_deepening
 			}
 
-			// break out of aspiration if in window
-			if alpha < best_eval && best_eval < beta {
-				if prev_best != best_move {
-					best_since_depth = depth
-					prev_best = best_move
-				}
-
-				if !data.infinite && depth - best_since_depth >= 2 && 
-					depth - last_aspiration_fail >= 2 && elapsed > 0 {
-
-					// threshold for stopping early decreases hyperbolically as
-					// allocated time runs out.
-					certainty_threshold := 1.5 * f64(data.allowed_time)/f64(elapsed)
-
-					pv_stability := f64(depth - best_since_depth)
-
-					// Increase certainty if the best move is much better than
-					// the second best
-					best_wdl := wdl(best_eval, 0)
-					second_wdl := wdl(second_eval, 0)
-					eval_delta := best_wdl - second_wdl
-					eval_delta *= math.log2(f64(depth + 2))
-
-					eval_stability := 1 / f64(1 + abs(best_eval - prev_eval))
-
-					depth_bonus := f64(depth) / 10
-
-					certainty := 0.35 * pv_stability + 1.8 * eval_delta +
-						0.6 * eval_stability + 0.15 * depth_bonus
-
-					if certainty >= certainty_threshold {
-						break iterative_deepening
-					}
-				}
-
-				// estimate the time required for next depth. Only bother
-				// searching if theres time to finish 20% of it
-				if !data.infinite && depth > 2 {
-					two_ply_ratio := f64(nodes_history[depth - 1]) /
-						f64(nodes_history[depth - 3])
-
-					ebf := math.sqrt(two_ply_ratio)
-					ebf = max(1.5, min(ebf, 4))
-
-					// moving average smoothing
-					if data.ebf != 0 {
-						data.ebf = data.ebf * 0.5 + ebf * 0.5
-					} else {
-						data.ebf = ebf
-					}
-
-					remaining_time := data.allowed_time - elapsed
-					estimated_time := f64(prev_search_time) * data.ebf
-					if estimated_time > f64(remaining_time) {
-						break iterative_deepening
-					}
-				}
-
-				prev_eval = best_eval
-				prev_search_time = time.tick_since(depth_timer)
-
-				break
+			// widen aspiration window and re-search if outside of bounds
+			if best_eval <= alpha || best_eval >= beta {
+				last_aspiration_fail = depth
+				alpha = prev_eval - lower_window
+				beta = prev_eval + upper_window
+				continue
 			}
 
-			last_aspiration_fail = depth
-			alpha = prev_eval - lower_window
-			beta = prev_eval + upper_window
-		}
+			if prev_best != best_move {
+				best_since_depth = depth
+				prev_best = best_move
+			}
 
+			// decide whether to stop the search now
+			if !data.infinite && depth - best_since_depth >= 2 && 
+				depth - last_aspiration_fail >= 2 && elapsed > 0 {
+
+				// threshold for stopping early decreases hyperbolically as
+				// allocated time runs out.
+				certainty_threshold := 1.5 * f64(data.allowed_time)/f64(elapsed)
+
+				pv_stability := f64(depth - best_since_depth)
+
+				// Increase certainty if the best move is much better than
+				// the second best
+				best_wdl := wdl(best_eval, 0)
+				second_wdl := wdl(second_eval, 0)
+				eval_delta := best_wdl - second_wdl
+				eval_delta *= math.log2(f64(depth + 2))
+
+				eval_stability := 1 / f64(1 + abs(best_eval - prev_eval))
+
+				depth_bonus := f64(depth) / 10
+
+				certainty := 0.35 * pv_stability + 1.8 * eval_delta +
+					0.6 * eval_stability + 0.15 * depth_bonus
+
+				if certainty >= certainty_threshold {
+					break iterative_deepening
+				}
+			}
+
+			// estimate the time required for next depth. Only bother
+			// searching if theres time to finish it
+			if !data.infinite && depth > 2 {
+				two_ply_ratio := f64(nodes_history[depth - 1]) /
+					f64(nodes_history[depth - 3])
+
+				ebf := math.sqrt(two_ply_ratio)
+				ebf = max(1.5, min(ebf, 4))
+
+				// moving average smoothing
+				if data.ebf != 0 {
+					data.ebf = data.ebf * 0.5 + ebf * 0.5
+				} else {
+					data.ebf = ebf
+				}
+
+				remaining_time := data.allowed_time - elapsed
+				estimated_time := f64(prev_search_time) * data.ebf
+				if estimated_time > f64(remaining_time) {
+					break iterative_deepening
+				}
+			}
+
+			prev_eval = best_eval
+			prev_search_time = time.tick_since(depth_timer)
+
+			break
+		}
 	}
 
 	move_str := to_string(prev_best)
@@ -336,6 +342,13 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		return 0
 	}
 
+	// mate distance pruning
+	// prune node if a mate shorter than the current ply has been found
+	alpha := max(alpha, -MATE_EVAL + ply)
+	beta := min(beta, MATE_EVAL - ply)
+	mate_window := alpha <= -MATE_EVAL + ply || beta >= MATE_EVAL - ply
+	if alpha >= beta do return alpha
+
 	if ply == MAX_DEPTH {
 		return evaluate(&data.position)
 	}
@@ -344,8 +357,6 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		return q_search(alpha, beta, ply, prev_move, data)
 	}
 
-	alpha := alpha
-	beta := beta
 	depth := depth
 	best_eval := MIN_EVAL
 	best_move := NULL_MOVE
@@ -366,30 +377,19 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		best_move = tt_entry.best_move
 
 		if tt_entry.depth >= depth {
-			tt_eval := tt_entry.eval
-			if tt_eval >= MATE_EVAL - MAX_DEPTH {
-				tt_eval -= ply
-			} else if tt_eval <= -MATE_EVAL + MAX_DEPTH {
-				tt_eval += ply
-			}
+			tt_eval := eval_from_tt(tt_entry.eval, ply)
 
 			switch tt_entry.eval_type {
 			case .Exact:
 				return tt_eval
 			case .LowerBound:
-				if tt_eval >= beta {
-					return tt_eval
-				}
 				alpha = max(alpha, tt_eval)
 			case .UpperBound:
-				if tt_eval <= alpha {
-					return tt_eval
-				}
 				beta = min(beta, tt_eval)
 			}
 
 			if alpha >= beta {
-				return alpha
+				return tt_eval
 			}
 		}
 	}
@@ -399,7 +399,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 	in_check := is_in_check(&data.position, masks.danger)
 	standing_pat := MIN_EVAL
 
-	if !in_check {
+	if !in_check && !mate_window {
 		// reverse futility pruning
 		// skip when in check, pv node, or there is a tt move
 		standing_pat = evaluate(&data.position)
@@ -421,7 +421,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 					ttable_insert(&t_table, TTableEntry{
 						data.position.hash,
 						null_depth,
-						eval,
+						eval_to_tt(eval, ply),
 						.LowerBound,
 						NULL_MOVE,
 					})
@@ -450,6 +450,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		move := pick_move(moves[i:], sort_scores[i:])
 		if !is_legal(&data.position, masks, move) do continue
 		flags := get_flags(move)
+		is_check := gives_check(&data.position, move, masks)
 		move_count += 1
 
 		// useful to see formatted move in debugger
@@ -459,8 +460,8 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		}
 
 		// futility pruning
-		if !in_check && !is_pv && !is_dynamic(flags) &&
-			!gives_check(&data.position, move, masks) {
+		if !in_check && !is_pv && move_count > 1 && !is_dynamic(flags) &&
+			!is_check && !mate_window {
 			margin := FUTILITY_MARGIN[depth - 1]
 			if standing_pat + margin < alpha {
 				continue
@@ -469,7 +470,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 
 		// late move reduction (LMR)
 		r := 0
-		if !is_pv && depth > 2 && move_count > 2 {
+		if !is_pv && depth > 2 && move_count > 2  && !is_check && !mate_window {
 			r = LMR_TABLE[min(depth, 63)][min(move_count, 63)]
 			r = max(r, 1)
 			r = min(r, depth - 2)
@@ -541,18 +542,10 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		return 0
 	}
 
-	// Store mate scores in transposition table relative to node instead of root
-	tt_eval := best_eval
-	if tt_eval >= MATE_EVAL - MAX_DEPTH {
-		tt_eval += ply
-	} else if tt_eval <= -MATE_EVAL + MAX_DEPTH {
-		tt_eval -= ply
-	}
-
 	ttable_insert(&t_table, TTableEntry{
 		data.position.hash,
 		tt_depth,
-		tt_eval,
+		eval_to_tt(best_eval, ply),
 		eval_type,
 		best_move,
 	})
@@ -582,6 +575,10 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 		return 0
 	}
 
+	alpha := max(alpha, -MATE_EVAL + ply)
+	beta  := min(beta,  MATE_EVAL - ply)
+	if alpha >= beta do return alpha
+
 	if ply >= MAX_DEPTH {
 		return evaluate(&data.position)
 	}
@@ -596,7 +593,6 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 	them := toggle(us)
 	masks := gen_legality_masks(&data.position)
 	in_check := is_in_check(&data.position, masks.danger)
-	alpha := alpha
 	best_move: Move
 	best_eval := MIN_EVAL
 	standing_pat: int
@@ -713,6 +709,143 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 	if in_check && move_count == 0 {
 		return -MATE_EVAL + ply
 	}
+
+	return best_eval
+}
+
+mate_search :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData) -> int {
+	if data.nodes % 512 == 0 {
+		if !data.infinite && time.tick_since(data.start_time) >= data.allowed_time {
+			data.aborted = true
+			return 0
+		}
+		if intrinsics.atomic_load(&stop_flag) {
+			data.aborted = true
+			return 0
+		}
+		if data.nodes >= data.max_nodes {
+			data.aborted = true
+			return 0
+		}
+	}
+
+	data.pv_length[ply] = 0
+	data.nodes += 1
+
+	if data.position.halfmove_clk >= 100 || threefold_repetition(data, ply) {
+		return 0
+	}
+
+	// mate distance pruning
+	// prune node if a mate shorter than the current ply has been found
+	alpha := max(alpha, -MATE_EVAL + ply)
+	beta := min(beta, MATE_EVAL - ply)
+	mate_window := alpha <= -MATE_EVAL + ply || beta >= MATE_EVAL - ply
+	if alpha >= beta do return alpha
+
+	if depth == 0 {
+		return MIN_EVAL
+	}
+
+	best_eval := MIN_EVAL
+	best_move := NULL_MOVE
+	tt_depth := depth
+	eval_type := EvalType.UpperBound
+
+	us := data.position.turn
+	masks := gen_legality_masks(&data.position)
+	in_check := is_in_check(&data.position, masks.danger)
+
+	zob_hash := data.position.hash
+	tt_entry := probe_ttable(t_table, zob_hash)
+	if tt_entry.hash == zob_hash {
+		best_move = tt_entry.best_move
+
+		if tt_entry.depth >= depth {
+			tt_eval := eval_from_tt(tt_entry.eval, ply)
+
+			switch tt_entry.eval_type {
+			case .Exact:
+				return tt_eval
+			case .LowerBound:
+				alpha = max(alpha, tt_eval)
+			case .UpperBound:
+				beta = min(beta, tt_eval)
+			}
+
+			if alpha >= beta {
+				return tt_eval
+			}
+		}
+	}
+
+	moves := gen_moves(&data.position, masks)
+	sort_scores := score_moves(
+		moves[:], ply, best_move, NULL_MOVE, NIL_PIECE, data
+	)
+
+	for i in 0..<len(moves) {
+		if gives_check(&data.position, moves[i], masks) {
+			sort_scores[i] += CHECK_SCORE
+		}
+	}
+
+	defer {
+		delete(moves)
+		delete(sort_scores)
+	}
+
+	move_count := 0
+	for i in 0..<len(moves) {
+		move := pick_move(moves[i:], sort_scores[i:])
+		if !is_legal(&data.position, masks, move) do continue
+		flags := get_flags(move)
+		is_check := gives_check(&data.position, move, masks)
+		move_count += 1
+
+		// useful to see formatted move in debugger
+		when ODIN_DEBUG {
+			move_str := to_string(move)
+			defer delete(move_str)
+		}
+
+		make_move(&data.position, move)
+		eval := -mate_search(-beta, -alpha, depth - 1, ply + 1, move, data)
+		unmake_move(&data.position, move)
+
+		if data.aborted do return 0
+
+		if eval > best_eval {
+			best_eval = eval
+			best_move = move
+
+			if eval >= beta {
+				eval_type = .LowerBound
+				break
+			}
+
+			if eval > alpha {
+				alpha = eval
+				update_pv(ply, move, data)
+				eval_type = .Exact
+			}
+		}
+	}
+
+	if move_count == 0 {
+		if is_in_check(&data.position, masks.danger) {
+			return -MATE_EVAL + ply
+		}
+		return 0
+	}
+
+	ttable_insert(&t_table, TTableEntry{
+		data.position.hash,
+		tt_depth,
+		eval_to_tt(best_eval, ply),
+		eval_type,
+		best_move,
+	})
 
 	return best_eval
 }

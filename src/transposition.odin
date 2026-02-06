@@ -42,9 +42,12 @@ resize_ttable :: proc(t_table: ^TTable, hash_size_mb: int) {
 // always insert strategy
 ttable_insert :: proc(t_table: ^TTable, entry: TTableEntry) {
 	idx := uint(entry.hash) % len(t_table.entries)
-	if t_table.entries[idx].hash == 0 {
+	old_entry := t_table.entries[idx]
+
+	if old_entry.hash == 0 {
 		t_table.hashfull += 1
 	}
+
 	t_table.entries[idx] = entry
 }
 
@@ -59,4 +62,16 @@ clear_ttable :: proc(t_table: ^TTable) {
 
 hashfull :: proc(t_table: TTable) -> int {
 	return t_table.hashfull * 1000 / len(t_table.entries)
+}
+
+eval_from_tt :: proc(val, ply: int) -> int {
+    if val >= MATE_EVAL - MAX_DEPTH do return val - ply
+    if val <= -MATE_EVAL + MAX_DEPTH do return val + ply
+    return val
+}
+
+eval_to_tt :: proc(val, ply: int) -> int {
+    if val >= MATE_EVAL - MAX_DEPTH do return val + ply
+    if val <= -MATE_EVAL + MAX_DEPTH do return val - ply
+    return val
 }

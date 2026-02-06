@@ -147,7 +147,7 @@ evaluate :: proc(position: ^Position) -> int {
 		eval_pawn_structure(position, us, &mg, &eg)
 
 		// king danger from perspective of "us" attack strength
-		zone_attack_units = min(zone_attack_units, len(ZONE_ATTACK_WEIGHT - 1))
+		zone_attack_units = min(zone_attack_units, len(ZONE_ATTACK_WEIGHT) - 1)
 		king_danger := ZONE_ATTACK_WEIGHT[zone_attack_units]
 		king_danger *= zone_attack_density / 5
 		mg[us] += king_danger

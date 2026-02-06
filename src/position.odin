@@ -168,6 +168,14 @@ parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {
 	for sq_str, sq in SQ_NAMES {
 		if strings.equal_fold(ep_str, sq_str) {
 			position.ep_sq = sq
+			position.can_ep = can_ep(&position)
+
+			if position.turn == .White {
+				position.ep_target = sq - 8
+			} else {
+				position.ep_target = sq + 8
+			}
+
 			break
 		}
 	}
@@ -180,11 +188,27 @@ parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {
 	position.fullmove_clk = fullmove
 
 	occ := occupied(&position)
-	gen_attack_mask(.White, &position, occ)
-	gen_attack_mask(.Black, &position, occ)
 	position.hash = zobrist_hash(position)
 
 	return position, true
+}
+
+can_ep :: proc(position: ^Position) -> bool {
+	us := position.turn
+	ep_bb := bitboard(position.ep_sq)
+	possible_capturers: u64
+
+	if us == .White {
+		possible_capturers = (ep_bb >> 7) &~ H_FILE | (ep_bb >> 9) &~ A_FILE
+	} else {
+		possible_capturers = (ep_bb << 9) &~ H_FILE | (ep_bb << 7) &~ A_FILE
+	}
+
+	if possible_capturers & position.pieces[us][.Pawn] != 0 {
+		return true
+	}
+
+	return false
 }
 
 is_pawn_endgame :: proc(position: Position) -> bool {

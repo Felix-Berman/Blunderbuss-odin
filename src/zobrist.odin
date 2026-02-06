@@ -45,19 +45,8 @@ zobrist_hash :: proc(position: Position) -> (hash: u64) {
 		hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + uint(right)]
 	}
 	
-	if position.ep_sq < 64 {
-		ep_bb := bitboard(position.ep_sq)
-		possible_capturers: u64
-
-		if us == .White {
-			possible_capturers = (ep_bb >> 7) &~ H_FILE | (ep_bb >> 9) &~ A_FILE
-		} else {
-			possible_capturers = (ep_bb << 9) &~ H_FILE | (ep_bb << 7) &~ A_FILE
-		}
-
-		if possible_capturers & position.pieces[us][.Pawn] != 0 {
-			hash ~= ZOBRIST_RANDS[EP_OFFSET + position.ep_sq % 8]
-		}
+	if position.ep_sq < 64 && position.can_ep {
+		hash ~= ZOBRIST_RANDS[EP_OFFSET + position.ep_sq % 8]
 	}
 
 	return

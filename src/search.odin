@@ -438,6 +438,11 @@ negamax :: proc(
 		}
 	}
 
+	// check extension
+	if in_check && depth < MAX_DEPTH {
+		depth += 1
+	}
+
 	// internal iterative reduction (IIR)
 	if depth > 5 && best_move == NULL_MOVE {
 		depth -= 2

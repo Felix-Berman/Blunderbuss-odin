@@ -387,7 +387,7 @@ gen_legality_masks :: proc(position: ^Position) -> (masks: LegalMasks) {
 			masks.checkers |= from_bb
 			masks.block_ray |= BETWEEN[king_sq_us][from]
 		} else if pop_count(blockers) == 1 {
-			masks.blockers |= blockers
+			masks.pinned |= blockers
 			masks.pin_rays[lsb(blockers)] = BETWEEN[king_sq_us][from] | from_bb
 		}
 	}
@@ -424,7 +424,7 @@ is_legal :: proc(position: ^Position, masks: LegalMasks, move: Move) -> bool {
 	flags := get_flags(move)
 
 	// pinned piece must move along pin ray
-	if from_bb & masks.blockers != 0 {
+	if from_bb & masks.pinned != 0 {
 		return to_bb & masks.pin_rays[move.from] != 0
 	}
 
@@ -446,35 +446,49 @@ is_legal :: proc(position: ^Position, masks: LegalMasks, move: Move) -> bool {
 
 // see if a move gives check before making it
 gives_check :: proc(position: ^Position, move: Move, masks: LegalMasks) -> bool {
-	// discovered check
-	if bitboard(move.from) & masks.blockers != 0 {
-		return true
-	}
-
 	attacks: u64
-	them := toggle(position.turn)
-	occ := occupied(position)
-	to := int(move.to)
+	us := position.turn
+	them := toggle(us)
 	to_bb := bitboard(move.to)
+	from_bb := bitboard(move.from)
+	from_to := from_bb | to_bb
+	occ := (occupied(position) &~ from_bb) | to_bb
+	king_bb := position.pieces[them][.King]
+	king_sq := lsb(king_bb)
 	piece := position.mailbox[move.from]
 	assert(piece != NIL_PIECE, "no piece found on move.from")
 
+	rook_like := position.pieces[us][.Rook] | position.pieces[us][.Queen]
+	bishop_like := position.pieces[us][.Bishop] | position.pieces[us][.Queen]
+
 	switch piece.type {
 	case .Pawn:
-		attacks = pawn_attacks(piece.colour, to_bb)
+		if pawn_attacks(piece.colour, to_bb) & king_bb != 0 {
+			return true
+		}
+
+		if get_flags(move) == EP_CAPTURE {
+			occ &~= bitboard(position.ep_target)
+		}
 	case .Knight:
-		attacks = KNIGHT_TABLE[move.to]
+		if KNIGHT_TABLE[move.to] & king_bb != 0 {
+			return true
+		}
 	case .Bishop:
-		attacks = magic_bishop_moves(to, occ)
+		bishop_like ~= from_to
 	case .Rook:
-		attacks = magic_rook_moves(to, occ)
+		rook_like ~= from_to
 	case .Queen:
-		attacks = magic_queen_moves(to, occ)
+		bishop_like ~= from_to
+		rook_like ~= from_to
 	case .King:
-		return false
 	}
 
-	if attacks & position.pieces[them][.King] != 0 {
+	if rook_like & magic_rook_moves(king_sq, occ) != 0 {
+		return true
+	}
+
+	if bishop_like & magic_bishop_moves(king_sq, occ) != 0 {
 		return true
 	}
 

@@ -26,8 +26,8 @@ make_move :: proc(position: ^Position, move: Move) {
 		position.last_irreversible_ply,
 	}
 
-	mover, ok := piece_on(position, move.from)
-	assert(ok, "Attempt to move from empty square")
+	mover := position.mailbox[move.from]
+	assert(mover != NIL_PIECE, "No piece on move.from")
 	assert(mover.colour == us, "Mover colour does not align with turn")
 
 	them := toggle(us)
@@ -45,6 +45,7 @@ make_move :: proc(position: ^Position, move: Move) {
 
 	position.pieces[us][mover.type] &~= from_bb // wait to toggle to_bb in case of promotion
 	position.occupancy[us] ~= from_to_bb
+	position.mailbox[move.from] = NIL_PIECE
 	position.hash ~= zobrist_p_sq(mover, move.from)
 
 	if flags == EP_CAPTURE {
@@ -53,15 +54,17 @@ make_move :: proc(position: ^Position, move: Move) {
 		ep_target := bitboard(ep_target_sq)
 		position.pieces[them][.Pawn] &~= ep_target
 		position.occupancy[them] &~= ep_target
+		position.mailbox[ep_target_sq] = NIL_PIECE
 		position.hash ~= zobrist_p_sq(captured, ep_target_sq)
 		irreversibles.captured_piece = captured
 	} else if .Capture in flags {
-		captured, ok := piece_on(position, move.to)
-		assert(ok, "Attempt to capture empty square")
+		captured := position.mailbox[move.to]
+		assert(captured != NIL_PIECE, "Attempt to capture empty square")
 		assert(captured.colour == them, "Captured colour does not align with opponent")
 		assert(captured.type != .King, "Illegal capture of king")
 		position.pieces[them][captured.type] &~= to_bb
 		position.occupancy[them] &~= to_bb
+		position.mailbox[move.to] = NIL_PIECE
 		position.hash ~= zobrist_p_sq(captured, move.to)
 		irreversibles.captured_piece = captured
 	}
@@ -87,37 +90,53 @@ make_move :: proc(position: ^Position, move: Move) {
 	}
 
 	if .Promotion in flags {
+		piece: Piece
 		switch flags &~ {.Capture} {
 		case KNIGHT_PROMOTION:
-			position.pieces[us][.Knight] |= to_bb
-			position.hash ~= zobrist_p_sq(make_piece(us, .Knight), move.to)
+			piece = make_piece(us, .Knight)
 		case BISHOP_PROMOTION:
-			position.pieces[us][.Bishop] |= to_bb
-			position.hash ~= zobrist_p_sq(make_piece(us, .Bishop), move.to)
+			piece = make_piece(us, .Bishop)
 		case ROOK_PROMOTION:
-			position.pieces[us][.Rook] |= to_bb
-			position.hash ~= zobrist_p_sq(make_piece(us, .Rook), move.to)
+			piece = make_piece(us, .Rook)
 		case QUEEN_PROMOTION:
-			position.pieces[us][.Queen] |= to_bb
-			position.hash ~= zobrist_p_sq(make_piece(us, .Queen), move.to)
+			piece = make_piece(us, .Queen)
 		}
+
+		position.pieces[piece.colour][piece.type] |= to_bb
+		position.mailbox[move.to] = piece
+		position.hash ~= zobrist_p_sq(piece, move.to)
 	} else {
 		position.pieces[us][mover.type] |= to_bb
+		position.mailbox[move.to] = mover
 		position.hash ~= zobrist_p_sq(mover, move.to)
 	}
 
 	if flags == KING_CASTLE {
+		rook := make_piece(us, .Rook)
+		from: Square = .H1 if us == .White else .H8
+		to: Square = .F1 if us == .White else .F8
 		rook_from_to: u64 = 0x05 if us == .White else 0x05 << 56
+
 		position.pieces[us][.Rook] ~= rook_from_to
 		position.occupancy[us] ~= rook_from_to
+		position.mailbox[from] = NIL_PIECE
+		position.mailbox[to] = rook
+
 		for rook_from_to > 0 {
 			sq := pop_lsb(&rook_from_to)
 			position.hash ~= zobrist_p_sq(make_piece(us, .Rook), sq)
 		}
 	} else if flags == QUEEN_CASTLE {
+		rook := make_piece(us, .Rook)
+		from: Square = .A1 if us == .White else .A8
+		to: Square = .D1 if us == .White else .D8
 		rook_from_to: u64 = 0x90 if us == .White else 0x90 << 56
+
 		position.pieces[us][.Rook] ~= rook_from_to
 		position.occupancy[us] ~= rook_from_to
+		position.mailbox[from] = NIL_PIECE
+		position.mailbox[to] = rook
+
 		for rook_from_to > 0 {
 			sq := pop_lsb(&rook_from_to)
 			position.hash ~= zobrist_p_sq(make_piece(us, .Rook), sq)
@@ -193,8 +212,8 @@ unmake_move :: proc(position: ^Position, move: Move) {
 	position.hash = history.hash
 	position.last_irreversible_ply = history.last_irreversible_ply
 
-	mover, ok := piece_on(position, move.to)
-	assert(ok && mover.colour == us)
+	mover := position.mailbox[move.to]
+	assert(mover != NIL_PIECE && mover.colour == us)
 
 	flags := get_flags(move)
 	from_bb := bitboard(move.from)
@@ -203,31 +222,48 @@ unmake_move :: proc(position: ^Position, move: Move) {
 
 	position.pieces[us][mover.type] &~= to_bb // wait to toggle from_bb in case of promotion
 	position.occupancy[us] ~= from_to_bb
+	position.mailbox[move.to] = NIL_PIECE
 
 	if flags == EP_CAPTURE {
 		ep_target := bitboard(position.ep_sq - forward)
 		position.pieces[them][.Pawn] |= ep_target
 		position.occupancy[them] |= ep_target
+		position.mailbox[lsb(ep_target)] = make_piece(them, .Pawn)
 	} else if .Capture in flags {
 		captured := history.captured_piece.(Piece)
 		position.pieces[them][captured.type] |= to_bb
 		position.occupancy[them] |= to_bb
+		position.mailbox[move.to] = captured
 	}
 
 	if .Promotion in flags {
 		position.pieces[us][.Pawn] |= from_bb
+		position.mailbox[move.from] = make_piece(us, .Pawn)
 	} else {
 		position.pieces[us][mover.type] |= from_bb
+		position.mailbox[move.from] = mover
 	}
 
 	if flags == KING_CASTLE {
+		rook := make_piece(us, .Rook)
 		rook_from_to: u64 = 0x05 if us == .White else 0x05 << 56
+		from: Square = .H1 if us == .White else .H8
+		to: Square = .F1 if us == .White else .F8
+
 		position.pieces[us][.Rook] ~= rook_from_to
 		position.occupancy[us] ~= rook_from_to
+		position.mailbox[from] = rook
+		position.mailbox[to] = NIL_PIECE
 	} else if flags == QUEEN_CASTLE {
+		rook := make_piece(us, .Rook)
 		rook_from_to: u64 = 0x90 if us == .White else 0x90 << 56
+		from: Square = .A1 if us == .White else .A8
+		to: Square = .D1 if us == .White else .D8
+
 		position.pieces[us][.Rook] ~= rook_from_to
 		position.occupancy[us] ~= rook_from_to
+		position.mailbox[from] = rook
+		position.mailbox[to] = NIL_PIECE
 	}
 
 	position.turn = us

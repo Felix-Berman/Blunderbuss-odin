@@ -456,8 +456,8 @@ gives_check :: proc(position: ^Position, move: Move, masks: LegalMasks) -> bool 
 	occ := occupied(position)
 	to := int(move.to)
 	to_bb := bitboard(move.to)
-	piece, ok := piece_on(position, move.from)
-	assert(ok, "no piece found on move.from")
+	piece := position.mailbox[move.from]
+	assert(piece != NIL_PIECE, "no piece found on move.from")
 
 	switch piece.type {
 	case .Pawn:

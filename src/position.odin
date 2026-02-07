@@ -3,7 +3,6 @@ package blunderbuss
 import "core:strings"
 import "core:unicode"
 import "core:strconv"
-import "base:intrinsics"
 
 STARTING_FEN :: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
@@ -32,6 +31,7 @@ make_piece :: proc(colour: Colour, type: PieceType) -> Piece {
 Position :: struct {
 	pieces: [Colour][PieceType]u64,
 	occupancy: [Colour]u64,
+	mailbox: [64]Piece,
 	turn: Colour,
 	castling: bit_set[Castling],
 	ep_sq: int,
@@ -77,6 +77,7 @@ starting_position :: proc() -> (position: Position) {
 	position.halfmove_clk = 0
 	position.ply = 0
 
+	fill_mailbox(&position)
 	position.hash = zobrist_hash(position)
 
 	return
@@ -90,18 +91,18 @@ toggle :: proc(colour: Colour) -> Colour {
 	return Colour(int(colour) ~ 1)
 }
 
-piece_on :: proc(position: ^Position, sq: $T) -> (Piece, bool) 
-	where intrinsics.type_is_numeric(T) {
+fill_mailbox :: proc(position: ^Position) {
+	position.mailbox = NIL_PIECE
 
-	for colour in Colour {
-		for type in PieceType {
-			if position.pieces[colour][type] & bitboard(sq) != 0 {
-				return make_piece(colour, type), true
+	for side in Colour {
+		for piece in PieceType {
+			bb := position.pieces[side][piece]
+			for bb > 0 {
+				sq := pop_lsb(&bb)
+				position.mailbox[sq] = make_piece(side, piece)
 			}
 		}
 	}
-
-	return {}, false
 }
 
 is_in_check :: proc(position: ^Position, atk: u64) -> bool {
@@ -187,7 +188,7 @@ parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {
 	fullmove := strconv.parse_uint(fullmove_clk) or_else 1
 	position.fullmove_clk = fullmove
 
-	occ := occupied(&position)
+	fill_mailbox(&position)
 	position.hash = zobrist_hash(position)
 
 	return position, true
@@ -226,4 +227,3 @@ is_pawn_endgame :: proc(position: Position) -> bool {
 
 	return pieces == 0
 }
-

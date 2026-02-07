@@ -171,7 +171,7 @@ root_search :: proc(data: ^SearchData) -> int {
 				prev_nodes := data.nodes
 
 				make_move(&data.position, move)
-				eval := -negamax(-beta, -alpha, depth - 1, ply + 1, NULL_MOVE, data)
+				eval := -negamax(-beta, -alpha, depth - 1, ply + 1, data)
 				unmake_move(&data.position, move)
 
 				if data.aborted do break iterative_deepening
@@ -319,7 +319,14 @@ root_search :: proc(data: ^SearchData) -> int {
 	return data.nodes
 }
 
-negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData) -> int {
+negamax :: proc(
+	alpha,
+	beta,
+	depth,
+	ply: int,
+	data: ^SearchData,
+	prev_move := NULL_MOVE
+) -> int {
 	if data.nodes % 2048 == 0 {
 		if !data.infinite && time.tick_since(data.start_time) >= data.allowed_time {
 			data.aborted = true
@@ -354,7 +361,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 	}
 
 	if depth == 0 {
-		return q_search(alpha, beta, ply, prev_move, data)
+		return q_search(alpha, beta, ply, data, prev_move)
 	}
 
 	depth := depth
@@ -367,8 +374,8 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 	prev_piece := NIL_PIECE
 	if prev_move != NULL_MOVE {
 		ok: bool
-		prev_piece, ok = piece_on(&data.position, prev_move.to)
-		assert(ok, "No piece found at previous move.to")
+		prev_piece = data.position.mailbox[prev_move.to]
+		assert(prev_piece != NIL_PIECE, "No piece found at previous move.to")
 	}
 
 	zob_hash := data.position.hash
@@ -414,7 +421,7 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 
 			if null_depth >= 0 {
 				make_null_move(&data.position)
-				eval := -negamax(-beta, -beta + 1, null_depth, ply + 1, NULL_MOVE, data)
+				eval := -negamax(-beta, -beta + 1, null_depth, ply + 1, data)
 				unmake_null_move(&data.position)
 
 				if eval >= beta {
@@ -480,23 +487,24 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 		eval: int
 		// search first move with full window
 		if move_count == 1 {
-			eval = -negamax(-beta, -alpha, depth - 1, ply + 1, move, data)
+			eval = -negamax(-beta, -alpha, depth - 1, ply + 1, data, move)
 		} else {
 			// otherwise apply null window and reduce depth
-			eval = -negamax(-alpha - 1, -alpha, depth - r - 1, ply + 1, move, data)
+			eval = -negamax(-alpha - 1, -alpha, depth - r - 1, ply + 1, data,
+				move)
 
 			// repeat with full depth
 			if eval > alpha && r > 0 {
 				r = 0
 				eval = -negamax(
-					-alpha - 1, -alpha, depth - 1, ply + 1, move, data
+					-alpha - 1, -alpha, depth - 1, ply + 1, data, move
 				)
 			}
 
 			// repeat the full search if we can't perform a cutoff
 			if eval > alpha && eval < beta && is_pv {
 				r = 0
-				eval = -negamax(-beta, -alpha, depth - 1, ply + 1, move, data)
+				eval = -negamax(-beta, -alpha, depth - 1, ply + 1, data, move)
 			}
 		}
 		unmake_move(&data.position, move)
@@ -553,7 +561,13 @@ negamax :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData
 	return best_eval
 }
 
-q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> int {
+q_search :: proc(
+	alpha,
+	beta,
+	ply: int,
+	data: ^SearchData,
+	prev_move := NULL_MOVE
+) -> int {
 	if data.nodes % 2048 == 0 {
 		if !data.infinite && time.tick_since(data.start_time) >= data.allowed_time {
 			data.aborted = true
@@ -600,8 +614,8 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 	prev_piece := NIL_PIECE
 	if prev_move != NULL_MOVE {
 		ok: bool
-		prev_piece, ok = piece_on(&data.position, prev_move.to)
-		assert(ok, "No piece found at previous move.to")
+		prev_piece = data.position.mailbox[prev_move.to]
+		assert(prev_piece != NIL_PIECE, "No piece found at previous move.to")
 	}
 
 	if !in_check {
@@ -670,8 +684,8 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 			if flags == EP_CAPTURE {
 				captured_val = piece_value[.Pawn]
 			} else if .Capture in flags {
-				captured_piece, ok := piece_on(&data.position, move.to)
-				assert(ok, "no piece on captured square")
+				captured_piece := data.position.mailbox[move.to]
+				assert(captured_piece != NIL_PIECE, "no piece on captured square")
 				captured_val = piece_value[captured_piece.type]
 			}
 			
@@ -687,7 +701,7 @@ q_search :: proc(alpha, beta, ply: int, prev_move: Move, data: ^SearchData) -> i
 		}
 
 		make_move(&data.position, move)
-		eval := -q_search(-beta, -alpha, ply + 1, move, data)
+		eval := -q_search(-beta, -alpha, ply + 1, data, move)
 		unmake_move(&data.position, move)
 
 		if data.aborted do return 0
@@ -1020,16 +1034,16 @@ see :: proc(position: ^Position, move: Move) -> int {
 		ep_bb := bitboard(position.ep_sq)
 		occ &~= ep_bb >> 8 if us == .White else ep_bb << 8
 	} else {
-		victim, ok := piece_on(position, to)
-		assert(ok, "No piece on captured to square")
+		victim := position.mailbox[to]
+		assert(victim != NIL_PIECE, "No piece on captured to square")
 		victim_type = victim.type
 	}
 
 	gain[0] = piece_value[victim_type]
 
 	attackers := attackers_to(position, to)
-	attacker, ok := piece_on(position, move.from)
-	assert(ok, "Attempt to move from empty square")
+	attacker := position.mailbox[move.from]
+	assert(attacker != NIL_PIECE, "Attempt to move from empty square")
 	assert(
 		attackers[us] & bitboard(move.from) != 0,
 		"Initial attacker not included in see attack set"
@@ -1104,8 +1118,8 @@ see :: proc(position: ^Position, move: Move) -> int {
 
 recursive_see :: proc(position: ^Position, to: int) -> (value: int) {
 	us := position.turn
-	victim, ok := piece_on(position, to)
-	assert(ok, "No victim in recursive see")
+	victim := position.mailbox[to]
+	assert(victim != NIL_PIECE, "No victim in recursive see")
 	victim_val := piece_value[victim.type]
 
 	attackers := attackers_to(position, to)
@@ -1146,8 +1160,8 @@ recursive_see_root :: proc(position: ^Position, move: Move) -> (value: int) {
 	if EP_CAPTURE == get_flags(move) {
 		victim_type = .Pawn
 	} else {
-		victim, ok := piece_on(position, to)
-		assert(ok, "No victim in recursive see")
+		victim := position.mailbox[to]
+		assert(victim != NIL_PIECE, "No victim in recursive see")
 		victim_type = victim.type
 
 		// strip promotion information from flags

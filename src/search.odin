@@ -54,6 +54,7 @@ SearchData :: struct {
 	mate: bool,
 	aborted: bool,
 	infinite: bool,
+	pondering: bool,
 	start_time: time.Tick,
 	allowed_time: time.Duration,
 	pv_table: [MAX_DEPTH][MAX_DEPTH]Move,
@@ -65,7 +66,6 @@ init_data :: proc(position: Position) -> (data: SearchData) {
 	data.position = position
 	data.max_depth = MAX_DEPTH
 	data.max_nodes = max(int)
-	data.infinite = true
 	data.start_time = time.tick_now()
 
 	// perform deep copy
@@ -252,8 +252,9 @@ root_search :: proc(data: ^SearchData) -> int {
 			}
 
 			// decide whether to stop the search now
-			if !data.infinite && depth - best_since_depth >= 2 && 
-				depth - last_aspiration_fail >= 2 && elapsed > 0 {
+			if !data.infinite && !intrinsics.atomic_load(&ponder) &&
+				depth - best_since_depth >= 2 && elapsed > 0 &&
+				depth - last_aspiration_fail >= 2 {
 
 				// threshold for stopping early decreases hyperbolically as
 				// allocated time runs out.
@@ -298,7 +299,7 @@ root_search :: proc(data: ^SearchData) -> int {
 
 				remaining_time := data.allowed_time - elapsed
 				estimated_time := f64(prev_search_time) * data.ebf
-				if estimated_time > f64(remaining_time) {
+				if f64(remaining_time) < 0.5 * estimated_time {
 					break iterative_deepening
 				}
 			}
@@ -311,8 +312,16 @@ root_search :: proc(data: ^SearchData) -> int {
 	}
 
 	move_str := to_string(prev_best)
-	fmt.println("bestmove", move_str)
+	fmt.print("bestmove", move_str)
 	delete(move_str)
+
+	if data.pv_length[0] > 1 {
+		move_str := to_string(data.pv_table[0][1])
+		fmt.print(" ponder", move_str)
+		delete(move_str)
+	}
+
+	fmt.println()
 
 	intrinsics.atomic_store(&is_searching, false)
 
@@ -328,7 +337,15 @@ negamax :: proc(
 	prev_move := NULL_MOVE
 ) -> int {
 	if data.nodes % 2048 == 0 {
-		if !data.infinite && time.tick_since(data.start_time) >= data.allowed_time {
+		// hacky way to start timer on ponderhit since SearchData is not
+		// accessible from the interface thread
+		if data.pondering && !intrinsics.atomic_load(&ponder) {
+			data.start_time = time.tick_now()
+			data.pondering = false
+		}
+
+		if !data.infinite && !intrinsics.atomic_load(&ponder) &&
+			time.tick_since(data.start_time) >= data.allowed_time {
 			data.aborted = true
 			return 0
 		}
@@ -574,7 +591,15 @@ q_search :: proc(
 	prev_move := NULL_MOVE
 ) -> int {
 	if data.nodes % 2048 == 0 {
-		if !data.infinite && time.tick_since(data.start_time) >= data.allowed_time {
+		// hacky way to start timer on ponderhit since SearchData is not
+		// accessible from the interface thread
+		if data.pondering && !intrinsics.atomic_load(&ponder) {
+			data.start_time = time.tick_now()
+			data.pondering = false
+		}
+
+		if !data.infinite && !intrinsics.atomic_load(&ponder) &&
+			time.tick_since(data.start_time) >= data.allowed_time {
 			data.aborted = true
 			return 0
 		}
@@ -734,6 +759,13 @@ q_search :: proc(
 
 mate_search :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^SearchData) -> int {
 	if data.nodes % 512 == 0 {
+		// hacky way to start timer on ponderhit since SearchData is not
+		// accessible from the interface thread
+		if data.pondering && !intrinsics.atomic_load(&ponder) {
+			data.start_time = time.tick_now()
+			data.pondering = false
+		}
+
 		if !data.infinite && time.tick_since(data.start_time) >= data.allowed_time {
 			data.aborted = true
 			return 0

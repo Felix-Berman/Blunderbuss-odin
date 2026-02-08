@@ -11,6 +11,7 @@ import "base:intrinsics"
 import "base:runtime"
 
 stop_flag, is_searching: bool
+ponder := false
 
 uci_loop :: proc() {
 	stdin := os.stream_from_handle(os.stdin)
@@ -39,6 +40,7 @@ uci_loop :: proc() {
 
 		switch command {
 		case "quit":
+			stop_flag = true
 			break uci_loop
 		case "uci":
 			fmt.println("id name Blunderbuss")
@@ -46,6 +48,7 @@ uci_loop :: proc() {
 			fmt.printfln("option name Hash type spin default %d min 0 max 64000",
 				DEFAULT_HASH_SIZE_MB)
 			fmt.println("option name Clear Hash type button")
+			fmt.println("option name Ponder type check default true")
 			fmt.println("uciok")
 		case "debug":
 		case "isready":
@@ -70,6 +73,9 @@ uci_loop :: proc() {
 			}
 		case "stop":
 			intrinsics.atomic_store_explicit(&stop_flag, true, .Relaxed)
+			intrinsics.atomic_store_explicit(&ponder, false, .Relaxed)
+		case "ponderhit":
+			intrinsics.atomic_store_explicit(&ponder, false, .Relaxed)
 		case "perft":
 			if depth_str, ok := strings.split_iterator(&line, " "); ok {
 				depth := strconv.parse_int(depth_str) or_else 0
@@ -83,6 +89,9 @@ uci_loop :: proc() {
 			display(position)
 		}
 	}
+
+	// wait for search to finish
+	for intrinsics.atomic_load(&is_searching) {}
 
 	if err := bufio.scanner_error(&scanner); err != nil {
 		fmt.eprintfln("error scanning input: %v", err)
@@ -151,6 +160,9 @@ go :: proc(line: ^string, position: ^Position) -> bool {
 			movetime = get_next_int(line) or_return
 		case "infinite":
 			data.infinite = true
+		case "ponder":
+			data.pondering = true
+			ponder = true
 		}
 	}
 
@@ -162,11 +174,11 @@ go :: proc(line: ^string, position: ^Position) -> bool {
 
 	if movetime != 0 {
 		data.allowed_time = time.Duration(movetime) * time.Millisecond
-		data.infinite = false
 	} else if side_time != 0 {
 		data.allowed_time = time.Duration(side_time/movestogo + side_inc/2)
 		data.allowed_time *= time.Millisecond
-		data.infinite = false
+	} else {
+		data.infinite = true
 	}
 
 	stop_flag = false

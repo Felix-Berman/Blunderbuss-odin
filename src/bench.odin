@@ -19,6 +19,7 @@ bench :: proc(depth: int = BENCH_DEPTH) {
 		}
 
 		data := init_data(position)
+		data.infinite = true
 		data.max_depth = depth
 		total_nodes += root_search(&data)
 		delete(data.position.history)

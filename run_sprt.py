@@ -60,7 +60,7 @@ def main():
         FASTCHESS_CMD,
         "-engine", f"name={feature_name}", f"cmd={path_feature}",
         "-engine", f"name={base_name}", f"cmd={path_base}",
-        "-each", f"tc=10+0.1", f"option.Hash={HASH}",
+        "-each", f"tc=10+0.1", f"option.Hash={HASH}", f"option.Ponder=false",
         "-sprt", f"elo0=0 elo1=10 alpha=0.05 beta=0.05",
         "-rounds", "4000",
         "-games", "2", # Play pairs (white/black)

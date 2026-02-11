@@ -299,7 +299,7 @@ root_search :: proc(data: ^SearchData) -> int {
 
 				remaining_time := data.allowed_time - elapsed
 				estimated_time := f64(prev_search_time) * data.ebf
-				if f64(remaining_time) < 0.5 * estimated_time {
+				if f64(remaining_time) < estimated_time {
 					break iterative_deepening
 				}
 			}
@@ -315,10 +315,20 @@ root_search :: proc(data: ^SearchData) -> int {
 	fmt.print("bestmove", move_str)
 	delete(move_str)
 
+	ponder_move: Move
 	if data.pv_length[0] > 1 {
 		move_str := to_string(data.pv_table[0][1])
 		fmt.print(" ponder", move_str)
 		delete(move_str)
+	} else {
+		hash := zobrist_move(data.position, prev_best)
+		entry := probe_ttable(t_table, hash)
+
+		if entry.hash == hash && entry.move != NULL_MOVE {
+			move_str := to_string(data.pv_table[0][1])
+			fmt.print(" ponder", move_str)
+			delete(move_str)
+		}
 	}
 
 	fmt.println()
@@ -398,7 +408,7 @@ negamax :: proc(
 	zob_hash := data.position.hash
 	tt_entry := probe_ttable(t_table, zob_hash)
 	if tt_entry.hash == zob_hash {
-		best_move = tt_entry.best_move
+		best_move = tt_entry.move
 
 		if tt_entry.depth >= depth {
 			tt_eval := eval_from_tt(tt_entry.eval, ply)
@@ -810,7 +820,7 @@ mate_search :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^Search
 	zob_hash := data.position.hash
 	tt_entry := probe_ttable(t_table, zob_hash)
 	if tt_entry.hash == zob_hash {
-		best_move = tt_entry.best_move
+		best_move = tt_entry.move
 
 		if tt_entry.depth >= depth {
 			tt_eval := eval_from_tt(tt_entry.eval, ply)

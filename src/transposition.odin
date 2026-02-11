@@ -18,7 +18,7 @@ TTableEntry :: struct {
 	depth: int,
 	eval: int,
 	eval_type: EvalType,
-	best_move: Move,
+	move: Move,
 }
 
 get_ttable_len :: proc(hash_size_mb: int) -> int {

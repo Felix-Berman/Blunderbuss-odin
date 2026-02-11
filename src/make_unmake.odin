@@ -143,34 +143,14 @@ make_move :: proc(position: ^Position, move: Move) {
 		}
 	}
 
-	if mover.type == .King {
-		for right in position.castling {
-			if right in CASTLING_SIDE[us] {
-				position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(right)]
-				position.castling &~= {right}
-				position.last_irreversible_ply = position.ply
-			}
+	for right in position.castling {
+		mask := CASTLING_MASK[right]
+
+		if from_to_bb & mask != 0 {
+			position.castling &~= {right}
+			position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(right)]
+			position.last_irreversible_ply = position.ply
 		}
-	}
-
-	if .WKingside in position.castling && from_to_bb & bitboard(Square.H1) != 0 {
-		position.castling &~= {.WKingside}
-		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.WKingside)]
-		position.last_irreversible_ply = position.ply
-	} else if .WQueenside in position.castling && from_to_bb & bitboard(Square.A1) != 0 {
-		position.castling &~= {.WQueenside}
-		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.WQueenside)]
-		position.last_irreversible_ply = position.ply
-	}
-
-	if .BKingside in position.castling && from_to_bb & bitboard(Square.H8) != 0 {
-		position.castling &~= {.BKingside}
-		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.BKingside)]
-		position.last_irreversible_ply = position.ply
-	} else if .BQueenside in position.castling && from_to_bb & bitboard(Square.A8) != 0 {
-		position.castling &~= {.BQueenside}
-		position.hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + int(Castling.BQueenside)]
-		position.last_irreversible_ply = position.ply
 	}
 
 	// always apply

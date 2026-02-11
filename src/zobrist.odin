@@ -56,3 +56,44 @@ zobrist_p_sq :: proc(piece: Piece, sq: $T) -> u64
 where intrinsics.type_is_numeric(T) {
 	return ZOBRIST_RANDS[T(piece) * 64 + sq]
 }
+
+zobrist_move :: proc(position: Position, move: Move) -> u64 {
+	hash := position.hash
+	flags := get_flags(move)
+	from_to := bitboard(move.from) | bitboard(move.to)
+
+	mover := position.mailbox[move.from]
+	assert(mover != NIL_PIECE)
+	hash ~= zobrist_p_sq(mover, move.from) ~ zobrist_p_sq(mover, move.to)
+
+	captured := position.mailbox[move.to]
+	if captured != NIL_PIECE {
+		hash ~= zobrist_p_sq(captured, move.to)
+	}
+
+	if position.ep_sq < 64 && position.can_ep {
+		hash ~= ZOBRIST_RANDS[EP_OFFSET + position.ep_sq % 8]
+	}
+
+	if flags == DOUBLE_PUSH {
+		hash ~= ZOBRIST_RANDS[EP_OFFSET + move.from % 8]
+	}
+
+	for right in position.castling {
+		mask := CASTLING_MASK[right]
+
+		if from_to & mask != 0 {
+			hash ~= ZOBRIST_RANDS[CASTLING_OFFSET + uint(right)]
+		}
+	}
+
+	hash ~= ZOBRIST_RANDS[TURN_OFFSET]
+	
+	when ODIN_DEBUG {
+		position := position
+		make_move(&position, move)
+		assert(hash == position.hash)
+	}
+
+	return hash
+}

@@ -13,6 +13,12 @@ CASTLING_SIDE: [Colour]bit_set[Castling] = {
 	.White = {.WKingside, .WQueenside},
 	.Black = {.BKingside, .BQueenside}
 }
+CASTLING_MASK: [Castling]u64 = {
+	.WKingside = 0x9,
+	.WQueenside = 0x88,
+	.BKingside = 0x9 << 56,
+	.BQueenside = 0x88 << 56,
+}
 
 Piece :: bit_field u8 {
 	colour: Colour | 1,

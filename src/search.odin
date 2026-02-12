@@ -258,7 +258,7 @@ root_search :: proc(data: ^SearchData) -> int {
 
 				// threshold for stopping early decreases hyperbolically as
 				// allocated time runs out.
-				certainty_threshold := 1.5 * f64(data.allowed_time)/f64(elapsed)
+				certainty_threshold := 1.3 * f64(data.allowed_time)/f64(elapsed)
 
 				pv_stability := f64(depth - best_since_depth)
 

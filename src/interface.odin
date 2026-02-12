@@ -137,8 +137,7 @@ parse_position :: proc(line: ^string) -> (position: Position, ok: bool) {
 go :: proc(line: ^string, position: ^Position) -> bool {
 	data := new(SearchData, runtime.default_allocator())
 	data^ = init_data(position^)
-	side_time, wtime, btime, side_inc, winc, binc, movetime: int
-	movestogo := 20
+	side_time, wtime, btime, side_inc, winc, binc, movetime, movestogo: int
 
 	for cmd in strings.split_iterator(line, " ") {
 		switch cmd {
@@ -170,6 +169,10 @@ go :: proc(line: ^string, position: ^Position) -> bool {
 		side_time, side_inc = wtime, winc
 	} else {
 		side_time, side_inc = btime, binc
+	}
+
+	if movestogo == 0 {
+		movestogo = 20 if side_inc != 0 else 30
 	}
 
 	if movetime != 0 {

@@ -317,18 +317,20 @@ root_search :: proc(data: ^SearchData) -> int {
 
 	ponder_move: Move
 	if data.pv_length[0] > 1 {
-		move_str := to_string(data.pv_table[0][1])
-		fmt.print(" ponder", move_str)
-		delete(move_str)
+		ponder_move = data.pv_table[0][1]
 	} else {
 		hash := zobrist_move(data.position, prev_best)
 		entry := probe_ttable(t_table, hash)
 
-		if entry.hash == hash && entry.move != NULL_MOVE {
-			move_str := to_string(data.pv_table[0][1])
-			fmt.print(" ponder", move_str)
-			delete(move_str)
+		if entry.hash == hash {
+			ponder_move = entry.move
 		}
+	}
+	
+	if ponder_move != NULL_MOVE {
+		move_str := to_string(ponder_move)
+		fmt.print(" ponder", move_str)
+		delete(move_str)
 	}
 
 	fmt.println()

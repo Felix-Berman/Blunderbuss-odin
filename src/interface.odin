@@ -172,7 +172,7 @@ go :: proc(line: ^string, position: ^Position) -> bool {
 	}
 
 	if movestogo == 0 {
-		movestogo = 20 if side_inc != 0 else 30
+		movestogo = 30 if side_inc != 0 else 40
 	}
 
 	if movetime != 0 {

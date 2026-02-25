@@ -67,11 +67,14 @@ test_range :: [2]int{1, 126}
 perft_suite :: proc(t: ^testing.T) {
 	init_piece_tables()
 
-	perft_file, ok := os.read_entire_file("perftsuite.epd")
+	perft_file, err := os.read_entire_file("perftsuite.epd",
+		context.allocator)
 
-	if !ok {
+	if err != nil {
+		fmt.eprintln("Failed to read perftsuite.epd")
 		return
 	}
+
 	defer delete(perft_file)
 
 	perft_str := string(perft_file)

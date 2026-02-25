@@ -14,7 +14,7 @@ stop_flag, is_searching: bool
 ponder := false
 
 uci_loop :: proc() {
-	stdin := os.stream_from_handle(os.stdin)
+	stdin := os.to_stream(os.stdin)
 	scanner: bufio.Scanner
 	bufio.scanner_init(&scanner, stdin)
 	defer bufio.scanner_destroy(&scanner)

@@ -98,7 +98,7 @@ root_search :: proc(data: ^SearchData) -> int {
 	intrinsics.atomic_store(&is_searching, true)
 
 	writer: bufio.Writer
-	stdout := os.stream_from_handle(os.stdout)
+	stdout := os.to_stream(os.stdout)
 	bufio.writer_init(&writer, stdout)
 	defer bufio.writer_destroy(&writer)
 

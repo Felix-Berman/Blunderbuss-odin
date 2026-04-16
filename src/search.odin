@@ -192,33 +192,27 @@ root_search :: proc(data: ^SearchData) -> int {
 			bufio.writer_reset(&writer, stdout)
 			free_all(context.temp_allocator)
 
-			eval_bound := ""
-			if best_eval >= beta {
-				upper_window *= 2
-				eval_bound = "lowerbound "
-			} else if best_eval <= alpha {
-				lower_window *= 2
-				eval_bound = "upperbound "
-			}
-
-			eval_type: string
+			eval_type := "cp"
 			print_eval := best_eval
 			if best_eval >= MATE_EVAL - MAX_DEPTH {
 				ply_to_mate := MATE_EVAL - best_eval
-				mate_eval := mate_search(
-					best_eval, MATE_EVAL, ply_to_mate, 0, NULL_MOVE, data)
-				print_eval = (MATE_EVAL - mate_eval + 1) / 2
+				print_eval = (ply_to_mate + 1) / 2
 				eval_type = "mate"
 				found_mate = true
 			} else if best_eval <= -MATE_EVAL + MAX_DEPTH {
 				ply_to_mate := MATE_EVAL + best_eval
-				mate_eval := mate_search(
-					-MATE_EVAL, best_eval, ply_to_mate, 0, NULL_MOVE, data)
-				print_eval = - (MATE_EVAL - mate_eval) / 2
+				print_eval = - ply_to_mate / 2
 				eval_type = "mate"
 				found_mate = true
-			} else {
-				eval_type = fmt.tprintf("{}cp", eval_bound)
+			}
+
+			eval_bound := ""
+			if !found_mate && best_eval >= beta {
+				upper_window *= 2
+				eval_bound = "lowerbound"
+			} else if !found_mate && best_eval <= alpha {
+				lower_window *= 2
+				eval_bound = "upperbound"
 			}
 
 			elapsed := time.tick_since(data.start_time)
@@ -228,9 +222,9 @@ root_search :: proc(data: ^SearchData) -> int {
 			pv_str := to_string(data.pv_table[0][:len], context.temp_allocator)
 			fmt.printfln(
 				"info depth %d seldepth %d nodes %d time %d nps %d " +
-				"hashfull %d score %s %d pv %s",
+				"hashfull %d score %s %d %s pv %s",
 				depth, data.seldepth, data.nodes, elapsed_ms, int(nps),
-				hashfull(t_table), eval_type, print_eval, pv_str
+				hashfull(t_table), eval_type, print_eval, eval_bound, pv_str
 			)
 
 			if move_count == 1 || found_mate {

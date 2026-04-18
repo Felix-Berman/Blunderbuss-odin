@@ -34,22 +34,49 @@ MG_BISHOP_PAIR_WEIGHT :: 10
 EG_BISHOP_PAIR_WEIGHT :: 50
 OPEN_FILE_PENALTY :: 100
 
-MG_MOBILITY_WEIGHT: [PieceType]int = {
-	.Pawn = 0,
-	.Knight = 4,
-	.Bishop = 3,
-	.Rook = 2,
-	.Queen = 1,
-	.King = 0,
+// logarithmic weights
+MG_KNIGHT_MOBILITY := [9]int{
+     -15,   -1,    6,   12,   17,   20,   23,   26,
+      28
 }
 
-EG_MOBILITY_WEIGHT: [PieceType]int = {
-	.Pawn = 0,
-	.Knight = 4,
-	.Bishop = 4,
-	.Rook = 4,
-	.Queen = 2,
-	.King = 5,
+EG_KNIGHT_MOBILITY := [9]int{
+     -12,    0,    7,   12,   16,   20,   23,   25,
+      27
+}
+
+MG_BISHOP_MOBILITY := [14]int{
+     -20,   -2,    7,   14,   20,   24,   28,   31,
+      34,   37,   39,   42,   44,   45
+}
+
+EG_BISHOP_MOBILITY := [14]int{
+     -16,    0,    8,   14,   19,   23,   26,   29,
+      32,   34,   36,   38,   40,   42
+}
+
+MG_ROOK_MOBILITY := [15]int{
+     -25,    2,   18,   30,   39,   46,   52,   58,
+      62,   67,   70,   74,   77,   80,   83
+}
+
+EG_ROOK_MOBILITY := [15]int{
+     -30,    8,   30,   46,   58,   68,   77,   84,
+      90,   96,  101,  106,  111,  115,  118
+}
+
+MG_QUEEN_MOBILITY := [28]int{
+     -15,    5,   17,   26,   33,   38,   43,   47,
+      50,   54,   56,   59,   61,   64,   66,   68,
+      69,   71,   73,   74,   76,   77,   79,   80,
+      81,   82,   83,   84
+}
+
+EG_QUEEN_MOBILITY := [28]int{
+     -12,   12,   26,   36,   44,   50,   56,   60,
+      64,   68,   71,   74,   77,   80,   82,   85,
+      87,   89,   91,   92,   94,   96,   97,   99,
+     100,  102,  103,  104
 }
 
 ZONE_ATTACK_UNITS: [PieceType]int = {
@@ -113,13 +140,25 @@ evaluate :: proc(position: ^Position) -> int {
 					continue
 				case .Knight:
 					to_bb = KNIGHT_TABLE[from]
+					mobility := pop_count(to_bb)
+					mg[us] += MG_KNIGHT_MOBILITY[mobility]
+					eg[us] += EG_KNIGHT_MOBILITY[mobility]
 				case .Bishop:
 					to_bb = magic_bishop_moves(from, occ)
+					mobility := pop_count(to_bb)
+					mg[us] += MG_BISHOP_MOBILITY[mobility]
+					eg[us] += EG_BISHOP_MOBILITY[mobility]
 					bishop_pair += {square_colour(from)}
 				case .Rook:
 					to_bb = magic_rook_moves(from, occ)
+					mobility := pop_count(to_bb)
+					mg[us] += MG_ROOK_MOBILITY[mobility]
+					eg[us] += EG_ROOK_MOBILITY[mobility]
 				case .Queen:
 					to_bb = magic_queen_moves(from, occ)
+					mobility := pop_count(to_bb)
+					mg[us] += MG_QUEEN_MOBILITY[mobility]
+					eg[us] += EG_QUEEN_MOBILITY[mobility]
 				case .King:
 					to_bb = KING_TABLE[from]
 				}
@@ -129,13 +168,6 @@ evaluate :: proc(position: ^Position) -> int {
 					zone_attack_units += ZONE_ATTACK_UNITS[piece]
 					zone_attack_density += pop_count(zone_attacks)
 				}
-
-				// count mobility
-				to_bb &~= position.occupancy[us] | pawn_controlled
-				mobility := pop_count(to_bb)
-
-				mg[us] += MG_MOBILITY_WEIGHT[piece] * mobility
-				eg[us] += EG_MOBILITY_WEIGHT[piece] * mobility
 			}
 		}
 

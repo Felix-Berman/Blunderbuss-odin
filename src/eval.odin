@@ -20,19 +20,28 @@ piece_phase: [PieceType]int = {
 	.King = 0,
 }
 
-MG_DOUBLED_PAWN_WEIGHT :: 30
-EG_DOUBLED_PAWN_WEIGHT :: 70
+MG_DOUBLED_PAWN_PENALTY: [5]int = { 0, 0, 15, 35, 60 }
+EG_DOUBLED_PAWN_PENALTY: [5]int = { 0, 0, 30, 70, 120 }
 MG_TRIPLED_PAWN_PENALTY :: 10
 EG_TRIPLED_PAWN_PENALTY :: 50
 MG_ISOLATED_PAWN_PENALTY :: 15
 EG_ISOLATED_PAWN_PENALTY :: 30
-MG_PASSED_PAWN_WEIGHT :: 10
-EG_PASSED_PAWN_WEIGHT :: 20
+MG_ISOLATED_DOUBLED_PENALTY :: 10
+EG_ISOLATED_DOUBLED_PENALTY :: 20
+MG_PASSED_PAWN := [8]int{ 0, 2, 7, 14, 26, 45, 75, 0, }
+EG_PASSED_PAWN := [8]int{ 0, 4, 11, 23, 44, 80, 143, 0, }
+MG_CONNECTED_PASSED_PAWN := [8]int{ 0, 0, 1, 3, 6, 11, 18, 0, }
+EG_CONNECTED_PASSED_PAWN := [8]int{ 0, 1, 2, 5, 11, 20, 35, 0, }
 MG_BACKWARD_PAWN_PENALTY :: 5
 EG_BACKWARD_PAWN_PENALTY :: 10
+MG_CONNECTED_PAWN :: 5
+EG_CONNECTED_PAWN :: 10
 MG_BISHOP_PAIR_WEIGHT :: 10
 EG_BISHOP_PAIR_WEIGHT :: 50
-OPEN_FILE_PENALTY :: 100
+ROOK_OPEN_FILE :: 20
+ROOK_SEMI_OPEN_FILE :: 10
+MG_TEMPO_BONUS :: 10
+EG_TEMPO_BONUS :: 10
 
 // logarithmic weights
 MG_KNIGHT_MOBILITY := [9]int{
@@ -98,7 +107,7 @@ ZONE_ATTACK_WEIGHT: [40]int = {
 
 wdl :: proc(eval: int, phase: int) -> f64 {
 	scale := 400 * (24 - phase)/24
-	return 1 / (1 + math.pow(10, -f64(eval/400)))
+	return 1 / (1 + math.pow(10, -f64(eval)/400))
 }
 
 evaluate :: proc(position: ^Position) -> int {
@@ -109,56 +118,67 @@ evaluate :: proc(position: ^Position) -> int {
 	occ := occupied(position)
 	phase := 0
 
-	for us in Colour {
-		them := toggle(us)
-		enemy_pawns := position.pieces[them][.Pawn]
-		pawn_controlled := pawn_attacks(them, enemy_pawns)
+	for c in Colour {
+		them := toggle(c)
+		pawns_us := position.pieces[us][.Pawn]
+		pawns_them := position.pieces[them][.Pawn]
+		pawn_controlled := pawn_attacks(them, pawns_them)
 		bishop_pair: bit_set[Colour]
 
 		king_sq_them := lsb(position.pieces[them][.King])
 		king_zone := get_king_zone(king_sq_them, them)
 		zone_attack_units, zone_attack_density: int
 
-		for bb, piece in position.pieces[us] {
+		for bb, piece in position.pieces[c] {
 			from_bb := bb
 			for from_bb > 0 {
 				from := pop_lsb(&from_bb)
 
 				// count material
 				lookup_sq := from
-				if us == .White {
+				if c == .White {
 					lookup_sq ~= 56 // PSQT defined from black perspective
 				}
 
-				mg[us] += piece_value[piece] + mg_piece_sq_tbl[piece][lookup_sq]
-				eg[us] += piece_value[piece] + eg_piece_sq_tbl[piece][lookup_sq]
+				mg[c] += piece_value[piece] + mg_piece_sq_tbl[piece][lookup_sq]
+				eg[c] += piece_value[piece] + eg_piece_sq_tbl[piece][lookup_sq]
 				phase += piece_phase[piece]
 
 				to_bb: u64
 				switch piece {
 				case .Pawn:
-					continue
+					to_bb = pawn_attacks(c, bitboard(from))
 				case .Knight:
 					to_bb = KNIGHT_TABLE[from]
 					mobility := pop_count(to_bb)
-					mg[us] += MG_KNIGHT_MOBILITY[mobility]
-					eg[us] += EG_KNIGHT_MOBILITY[mobility]
+					mg[c] += MG_KNIGHT_MOBILITY[mobility]
+					eg[c] += EG_KNIGHT_MOBILITY[mobility]
 				case .Bishop:
 					to_bb = magic_bishop_moves(from, occ)
 					mobility := pop_count(to_bb)
-					mg[us] += MG_BISHOP_MOBILITY[mobility]
-					eg[us] += EG_BISHOP_MOBILITY[mobility]
+					mg[c] += MG_BISHOP_MOBILITY[mobility]
+					eg[c] += EG_BISHOP_MOBILITY[mobility]
+
 					bishop_pair += {square_colour(from)}
 				case .Rook:
 					to_bb = magic_rook_moves(from, occ)
 					mobility := pop_count(to_bb)
-					mg[us] += MG_ROOK_MOBILITY[mobility]
-					eg[us] += EG_ROOK_MOBILITY[mobility]
+					mg[c] += MG_ROOK_MOBILITY[mobility]
+					eg[c] += EG_ROOK_MOBILITY[mobility]
+
+					file := SQ_MASKS[from].file
+					if pawns_us & file == 0 {
+						if pawns_them & file == 0 {
+							mg[us] += ROOK_OPEN_FILE
+						} else {
+							mg[us] += ROOK_SEMI_OPEN_FILE
+						}
+					}
 				case .Queen:
 					to_bb = magic_queen_moves(from, occ)
 					mobility := pop_count(to_bb)
-					mg[us] += MG_QUEEN_MOBILITY[mobility]
-					eg[us] += EG_QUEEN_MOBILITY[mobility]
+					mg[c] += MG_QUEEN_MOBILITY[mobility]
+					eg[c] += EG_QUEEN_MOBILITY[mobility]
 				case .King:
 					to_bb = KING_TABLE[from]
 				}
@@ -172,26 +192,24 @@ evaluate :: proc(position: ^Position) -> int {
 		}
 
 		if bishop_pair == {.White, .Black} {
-			mg[us] += MG_BISHOP_PAIR_WEIGHT
-			eg[us] += EG_BISHOP_PAIR_WEIGHT
+			mg[c] += MG_BISHOP_PAIR_WEIGHT
+			eg[c] += EG_BISHOP_PAIR_WEIGHT
 		}
 
-		eval_pawn_structure(position, us, &mg, &eg)
+		eval_pawn_structure(position, c, &mg, &eg)
 
 		// king danger from perspective of "us" attack strength
 		zone_attack_units = min(zone_attack_units, len(ZONE_ATTACK_WEIGHT) - 1)
-		king_danger := ZONE_ATTACK_WEIGHT[zone_attack_units]
-		king_danger *= zone_attack_density / 5
-		mg[us] += king_danger
+		zone_attackers := ZONE_ATTACK_WEIGHT[zone_attack_units]
+		mg[c] += zone_attackers * zone_attack_density / 5
 	}
 
-	// in case of promotion
-	if phase > 24 {
-		phase = 24
-	}
+	// phase clamping
+	phase = min(phase, 24)
+	phase = max(phase, 0)
 
-	mg_eval := mg[us] - mg[them]
-	eg_eval := eg[us] - eg[them]
+	mg_eval := mg[us] - mg[them] + MG_TEMPO_BONUS
+	eg_eval := eg[us] - eg[them] + EG_TEMPO_BONUS
 
 	return (mg_eval * phase + eg_eval * (24 - phase)) / 24
 }
@@ -236,13 +254,24 @@ eval_pawn_structure :: proc(position: ^Position, us: Colour, mg, eg: ^[Colour]in
 			sentry_mask = bitboard(sq - 17) | bitboard(sq - 15)
 		}
 
+		defenders := pawns_us & pawn_attacks(them, bitboard(sq))
+		if defenders != 0 {
+			mg[us] += MG_CONNECTED_PAWN
+			eg[us] += EG_CONNECTED_PAWN
+		}
+
 		if (file_left | file_right) & pawns_us == 0 {
 			is_isolated[file_idx] = true
 		}
 
 		if ahead_mask & pawns_them == 0 {
-			mg[us] += pushed_distance * MG_PASSED_PAWN_WEIGHT
-			eg[us] += pushed_distance * EG_PASSED_PAWN_WEIGHT
+			mg[us] += MG_PASSED_PAWN[pushed_distance]
+			eg[us] += EG_PASSED_PAWN[pushed_distance]
+
+			if defenders != 0 {
+				mg[us] += MG_CONNECTED_PASSED_PAWN[pushed_distance]
+				eg[us] += EG_CONNECTED_PASSED_PAWN[pushed_distance]
+			}
 		}
 
 		if behind_mask & pawns_us == 0 && sentry_mask & pawns_them != 0 {
@@ -252,19 +281,19 @@ eval_pawn_structure :: proc(position: ^Position, us: Colour, mg, eg: ^[Colour]in
 	}
 
 	for file in 0..<8 {
+		count := file_count[file]
+
+		mg[us] -= MG_DOUBLED_PAWN_PENALTY[min(count, 4)]
+		eg[us] -= EG_DOUBLED_PAWN_PENALTY[min(count, 4)]
+
 		if is_isolated[file] {
 			mg[us] -= MG_ISOLATED_PAWN_PENALTY
 			eg[us] -= EG_ISOLATED_PAWN_PENALTY
-		}
 
-		count := file_count[file]
-		if count <= 1 do continue
-
-		mg[us] -= (count - 1) * MG_DOUBLED_PAWN_WEIGHT
-		eg[us] -= (count - 1) * EG_DOUBLED_PAWN_WEIGHT
-		if count >= 3 {
-			mg[us] -= MG_TRIPLED_PAWN_PENALTY
-			eg[us] -= EG_TRIPLED_PAWN_PENALTY
+			if count > 1 {
+				mg[us] -= MG_ISOLATED_DOUBLED_PENALTY
+				eg[us] -= EG_ISOLATED_DOUBLED_PENALTY
+			}
 		}
 	}
 }

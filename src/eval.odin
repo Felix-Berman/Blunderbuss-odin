@@ -1,14 +1,137 @@
 package blunderbuss
 
 import "core:math"
+import "core:testing"
+import "core:log"
+import "core:fmt"
 
-piece_value: [PieceType]int = {
-	.Pawn = 100,
-	.Knight = 300,
-	.Bishop = 350,
-	.Rook = 500,
-	.Queen = 900,
-	.King = 30_000
+TRACING :: #config(TRACING, false)
+
+Trace :: struct {
+	turn: Colour,
+	phase: int,
+	pieces: [64]Piece,
+	isolated_pawns: [Colour]int,
+	backward_pawns: [Colour]int,
+	connected_pawns: [Colour]int,
+	doubled_pawns: [Colour][8]int,
+	isolated_doubled: [Colour]int,
+	passed_pawns: [Colour][8]int,
+	connected_passed: [Colour][8]int,
+	bishop_pair: [Colour]bool,
+	rook_open: [Colour]int,
+	rook_semi_open: [Colour]int,
+	knight_mobility: [Colour][len(KNIGHT_MOBILITY)]int,
+	bishop_mobility: [Colour][len(BISHOP_MOBILITY)]int,
+	rook_mobility: [Colour][len(ROOK_MOBILITY)]int,
+	queen_mobility: [Colour][len(QUEEN_MOBILITY)]int,
+	attack_units: [Colour]int,
+	zone_attack_density: [Colour]int,
+}
+
+when TRACING {
+	trace: Trace
+}
+
+Score :: distinct i32 // packed data: upper 16 bits = eg, lower 16 bits = mg
+
+S :: #force_inline proc "contextless" (mg, eg: i16) -> Score {
+	return Score(i32(eg) << 16 + i32(mg))
+}
+
+score_mg :: #force_inline proc(s: Score) -> i16 {
+	return i16(s)
+}
+
+// negative middlegame values borrow LSB from endgame value.
+// Adding 0x8000 to mg value with leading 1 (negative) carries to the endgame
+// value restoring it from the borrow
+score_eg :: #force_inline proc(s: Score) -> i16 {
+	return i16((s + 0x8000) >> 16)
+}
+
+pawn_tbl: [64]Score = {
+	S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0),
+	S( 50, 50), S( 50, 50), S( 50, 50), S( 50, 50), S( 50, 50), S( 50, 50), S( 50, 50), S( 50, 50),
+	S( 10, 10), S( 10, 10), S( 20, 20), S( 30, 30), S( 30, 30), S( 20, 20), S( 10, 10), S( 10, 10),
+	S(  5,  5), S(  5,  5), S( 10, 10), S( 25, 25), S( 25, 25), S( 10, 10), S(  5,  5), S(  5,  5),
+	S(  0,  0), S(  0,  0), S(  0,  0), S( 20, 20), S( 20, 20), S(  0,  0), S(  0,  0), S(  0,  0),
+	S(  5,  5), S( -5, -5), S(-10,-10), S(  0,  0), S(  0,  0), S(-10,-10), S( -5, -5), S(  5,  5),
+	S(  5,  5), S( 10, 10), S( 10, 10), S(-20,-20), S(-20,-20), S( 10, 10), S( 10, 10), S(  5,  5),
+	S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0),
+}
+
+knight_tbl: [64]Score = {
+	S(-50,-50), S(-40,-40), S(-30,-30), S(-30,-30), S(-30,-30), S(-30,-30), S(-40,-40), S(-50,-50),
+	S(-40,-40), S(-20,-20), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(-20,-20), S(-40,-40),
+	S(-30,-30), S(  0,  0), S( 10, 10), S( 15, 15), S( 15, 15), S( 10, 10), S(  0,  0), S(-30,-30),
+	S(-30,-30), S(  5,  5), S( 15, 15), S( 20, 20), S( 20, 20), S( 15, 15), S(  5,  5), S(-30,-30),
+	S(-30,-30), S(  0,  0), S( 15, 15), S( 20, 20), S( 20, 20), S( 15, 15), S(  0,  0), S(-30,-30),
+	S(-30,-30), S(  5,  5), S( 10, 10), S( 15, 15), S( 15, 15), S( 10, 10), S(  5,  5), S(-30,-30),
+	S(-40,-40), S(-20,-20), S(  0,  0), S(  5,  5), S(  5,  5), S(  0,  0), S(-20,-20), S(-40,-40),
+	S(-50,-50), S(-40,-40), S(-30,-30), S(-30,-30), S(-30,-30), S(-30,-30), S(-40,-40), S(-50,-50),
+}
+
+bishop_tbl: [64]Score = {
+	S(-20,-20), S(-10,-10), S(-10,-10), S(-10,-10), S(-10,-10), S(-10,-10), S(-10,-10), S(-20,-20),
+	S(-10,-10), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(-10,-10),
+	S(-10,-10), S(  0,  0), S(  5,  5), S( 10, 10), S( 10, 10), S(  5,  5), S(  0,  0), S(-10,-10),
+	S(-10,-10), S(  5,  5), S(  5,  5), S( 10, 10), S( 10, 10), S(  5,  5), S(  5,  5), S(-10,-10),
+	S(-10,-10), S(  0,  0), S( 10, 10), S( 10, 10), S( 10, 10), S( 10, 10), S(  0,  0), S(-10,-10),
+	S(-10,-10), S( 10, 10), S( 10, 10), S( 10, 10), S( 10, 10), S( 10, 10), S( 10, 10), S(-10,-10),
+	S(-10,-10), S(  5,  5), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  5,  5), S(-10,-10),
+	S(-20,-20), S(-10,-10), S(-10,-10), S(-10,-10), S(-10,-10), S(-10,-10), S(-10,-10), S(-20,-20),
+}
+
+rook_tbl: [64]Score = {
+	S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0),
+	S(  5,  5), S( 10, 10), S( 10, 10), S( 10, 10), S( 10, 10), S( 10, 10), S( 10, 10), S(  5,  5),
+	S( -5, -5), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S( -5, -5),
+	S( -5, -5), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S( -5, -5),
+	S( -5, -5), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S( -5, -5),
+	S( -5, -5), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S( -5, -5),
+	S( -5, -5), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S( -5, -5),
+	S(  0,  0), S(  0,  0), S(  0,  0), S(  5,  5), S(  5,  5), S(  0,  0), S(  0,  0), S(  0,  0),
+}
+
+queen_tbl: [64]Score = {
+	S(-20,-20), S(-10,-10), S(-10,-10), S( -5, -5), S( -5, -5), S(-10,-10), S(-10,-10), S(-20,-20),
+	S(-10,-10), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(-10,-10),
+	S(-10,-10), S(  0,  0), S(  5,  5), S(  5,  5), S(  5,  5), S(  5,  5), S(  0,  0), S(-10,-10),
+	S( -5, -5), S(  0,  0), S(  5,  5), S(  5,  5), S(  5,  5), S(  5,  5), S(  0,  0), S( -5, -5),
+	S(  0,  0), S(  0,  0), S(  5,  5), S(  5,  5), S(  5,  5), S(  5,  5), S(  0,  0), S( -5, -5),
+	S(-10,-10), S(  5,  5), S(  5,  5), S(  5,  5), S(  5,  5), S(  5,  5), S(  0,  0), S(-10,-10),
+	S(-10,-10), S(  0,  0), S(  5,  5), S(  0,  0), S(  0,  0), S(  0,  0), S(  0,  0), S(-10,-10),
+	S(-20,-20), S(-10,-10), S(-10,-10), S( -5, -5), S( -5, -5), S(-10,-10), S(-10,-10), S(-20,-20),
+}
+
+king_tbl: [64]Score = {
+	S(-30,-50), S(-40,-40), S(-40,-30), S(-50,-30), S(-50,-30), S(-40,-30), S(-40,-40), S(-30,-50),
+	S(-30,-40), S(-40,-20), S(-40,  0), S(-50,  0), S(-50,  0), S(-40,  0), S(-40,-20), S(-30,-40),
+	S(-30,-30), S(-40,  0), S(-40, 10), S(-50, 15), S(-50, 15), S(-40, 10), S(-40,  0), S(-30,-30),
+	S(-30,-30), S(-40,  5), S(-40, 15), S(-50, 20), S(-50, 20), S(-40, 15), S(-40,  5), S(-30,-30),
+	S(-20,-30), S(-30,  0), S(-30, 15), S(-40, 20), S(-40, 20), S(-30, 15), S(-30,  0), S(-20,-30),
+	S(-10,-30), S(-20,  5), S(-20, 10), S(-20, 15), S(-20, 15), S(-20, 10), S(-20,  5), S(-10,-30),
+	S( 20,-40), S( 20,-20), S(  0,  0), S(  0,  5), S(  0,  5), S(  0,  0), S( 20,-20), S( 20,-40),
+	S( 20,-50), S( 30,-40), S( 10,-30), S(  0,-30), S(  0,-30), S( 10,-30), S( 30,-40), S( 20,-50),
+}
+
+piece_sq_tbl: [PieceType][64]Score = {
+	.Pawn   = pawn_tbl,
+	.Knight = knight_tbl,
+	.Bishop = bishop_tbl,
+	.Rook   = rook_tbl,
+	.Queen  = queen_tbl,
+	.King   = king_tbl,
+}
+
+piece_score: [PieceType]Score = {
+	.Pawn = S(100, 100),
+	.Knight = S(300, 300),
+	.Bishop = S(350, 350),
+	.Rook = S(500, 500),
+	.Queen = S(900, 900),
+	.King = S(0, 0),
 }
 
 piece_phase: [PieceType]int = {
@@ -20,72 +143,51 @@ piece_phase: [PieceType]int = {
 	.King = 0,
 }
 
-MG_DOUBLED_PAWN_PENALTY: [5]int = { 0, 0, 15, 35, 60 }
-EG_DOUBLED_PAWN_PENALTY: [5]int = { 0, 0, 30, 70, 120 }
-MG_TRIPLED_PAWN_PENALTY :: 10
-EG_TRIPLED_PAWN_PENALTY :: 50
-MG_ISOLATED_PAWN_PENALTY :: 15
-EG_ISOLATED_PAWN_PENALTY :: 30
-MG_ISOLATED_DOUBLED_PENALTY :: 10
-EG_ISOLATED_DOUBLED_PENALTY :: 20
-MG_PASSED_PAWN := [8]int{ 0, 2, 7, 14, 26, 45, 75, 0, }
-EG_PASSED_PAWN := [8]int{ 0, 4, 11, 23, 44, 80, 143, 0, }
-MG_CONNECTED_PASSED_PAWN := [8]int{ 0, 0, 1, 3, 6, 11, 18, 0, }
-EG_CONNECTED_PASSED_PAWN := [8]int{ 0, 1, 2, 5, 11, 20, 35, 0, }
-MG_BACKWARD_PAWN_PENALTY :: 5
-EG_BACKWARD_PAWN_PENALTY :: 10
-MG_CONNECTED_PAWN :: 5
-EG_CONNECTED_PAWN :: 10
-MG_BISHOP_PAIR_WEIGHT :: 10
-EG_BISHOP_PAIR_WEIGHT :: 50
-ROOK_OPEN_FILE :: 20
-ROOK_SEMI_OPEN_FILE :: 10
-MG_TEMPO_BONUS :: 10
-EG_TEMPO_BONUS :: 10
+DOUBLED_PAWN_PENALTY: [5]Score = { 0, 0, S(15, 30), S(35, 70), S(60, 120) }
+ISOLATED_PAWN_PENALTY := S(15, 30)
+ISOLATED_DOUBLED_PENALTY := S(10, 20)
+BACKWARD_PAWN_PENALTY := S(5, 10)
+CONNECTED_PAWN := S(5, 10)
+
+PASSED_PAWN := [8]Score{
+	S(0, 0), S(2, 4), S(7, 11), S(14, 23),
+	S(26, 44), S(45, 80), S(75, 143), S(0, 0)
+}
+CONNECTED_PASSED_PAWN := [8]Score{
+	S(0, 0), S(0, 1), S(1, 2), S(3, 5),
+	S(6, 11), S(11, 20), S(18, 35), S(0, 0)
+}
+
+BISHOP_PAIR_WEIGHT := S(10, 50)
+ROOK_OPEN_FILE := S(20, 0)
+ROOK_SEMI_OPEN_FILE := S(10, 0)
+TEMPO_BONUS := S(10, 10)
 
 // logarithmic weights
-MG_KNIGHT_MOBILITY := [9]int{
-     -15,   -1,    6,   12,   17,   20,   23,   26,
-      28
+KNIGHT_MOBILITY := [9]Score{
+     S(-15,-12), S( -1,  0), S(  6,  7), S( 12, 12), S( 17, 16),
+     S( 20, 20), S( 23, 23), S( 26, 25), S( 28, 27),
 }
 
-EG_KNIGHT_MOBILITY := [9]int{
-     -12,    0,    7,   12,   16,   20,   23,   25,
-      27
+BISHOP_MOBILITY := [14]Score{
+     S(-20,-16), S( -2,  0), S(  7,  8), S( 14, 14), S( 20, 19),
+     S( 24, 23), S( 28, 26), S( 31, 29), S( 34, 32), S( 37, 34),
+     S( 39, 36), S( 42, 38), S( 44, 40), S( 45, 42),
 }
 
-MG_BISHOP_MOBILITY := [14]int{
-     -20,   -2,    7,   14,   20,   24,   28,   31,
-      34,   37,   39,   42,   44,   45
+ROOK_MOBILITY := [15]Score{
+     S(-25,-30), S(  2,  8), S( 18, 30), S( 30, 46), S( 39, 58),
+     S( 46, 68), S( 52, 77), S( 58, 84), S( 62, 90), S( 67, 96),
+     S( 70,101), S( 74,106), S( 77,111), S( 80,115), S( 83,118),
 }
 
-EG_BISHOP_MOBILITY := [14]int{
-     -16,    0,    8,   14,   19,   23,   26,   29,
-      32,   34,   36,   38,   40,   42
-}
-
-MG_ROOK_MOBILITY := [15]int{
-     -25,    2,   18,   30,   39,   46,   52,   58,
-      62,   67,   70,   74,   77,   80,   83
-}
-
-EG_ROOK_MOBILITY := [15]int{
-     -30,    8,   30,   46,   58,   68,   77,   84,
-      90,   96,  101,  106,  111,  115,  118
-}
-
-MG_QUEEN_MOBILITY := [28]int{
-     -15,    5,   17,   26,   33,   38,   43,   47,
-      50,   54,   56,   59,   61,   64,   66,   68,
-      69,   71,   73,   74,   76,   77,   79,   80,
-      81,   82,   83,   84
-}
-
-EG_QUEEN_MOBILITY := [28]int{
-     -12,   12,   26,   36,   44,   50,   56,   60,
-      64,   68,   71,   74,   77,   80,   82,   85,
-      87,   89,   91,   92,   94,   96,   97,   99,
-     100,  102,  103,  104
+QUEEN_MOBILITY := [28]Score{
+     S(-15,-12), S(  5, 12), S( 17, 26), S( 26, 36), S( 33, 44),
+     S( 38, 50), S( 43, 56), S( 47, 60), S( 50, 64), S( 54, 68),
+     S( 56, 71), S( 59, 74), S( 61, 77), S( 64, 80), S( 66, 82),
+     S( 68, 85), S( 69, 87), S( 71, 89), S( 73, 91), S( 74, 92),
+     S( 76, 94), S( 77, 96), S( 79, 97), S( 80, 99), S( 81,100),
+     S( 82,102), S( 83,103), S( 84,104),
 }
 
 ZONE_ATTACK_UNITS: [PieceType]int = {
@@ -111,12 +213,17 @@ wdl :: proc(eval: int, phase: int) -> f64 {
 }
 
 evaluate :: proc(position: ^Position) -> int {
-	mg: [Colour]int
-	eg: [Colour]int
+	when TRACING {
+		trace = Trace{}
+		trace.turn = position.turn
+	}
+
+	scores: [Colour]Score
 	us := position.turn
 	them := toggle(us)
 	occ := occupied(position)
-	phase := 0
+	phase: int
+	king_danger: [Colour]int
 
 	for us in Colour {
 		them := toggle(us)
@@ -133,6 +240,7 @@ evaluate :: proc(position: ^Position) -> int {
 			from_bb := bb
 			for from_bb > 0 {
 				from := pop_lsb(&from_bb)
+				when TRACING do trace.pieces[from] = make_piece(us, piece)
 
 				// count material
 				lookup_sq := from
@@ -140,8 +248,7 @@ evaluate :: proc(position: ^Position) -> int {
 					lookup_sq ~= 56 // PSQT defined from black perspective
 				}
 
-				mg[us] += piece_value[piece] + mg_piece_sq_tbl[piece][lookup_sq]
-				eg[us] += piece_value[piece] + eg_piece_sq_tbl[piece][lookup_sq]
+				scores[us] += piece_score[piece] + piece_sq_tbl[piece][lookup_sq]
 				phase += piece_phase[piece]
 
 				to_bb: u64
@@ -151,34 +258,36 @@ evaluate :: proc(position: ^Position) -> int {
 				case .Knight:
 					to_bb = KNIGHT_TABLE[from]
 					mobility := pop_count(to_bb)
-					mg[us] += MG_KNIGHT_MOBILITY[mobility]
-					eg[us] += EG_KNIGHT_MOBILITY[mobility]
+					scores[us] += KNIGHT_MOBILITY[mobility]
+					when TRACING do trace.knight_mobility[us][mobility] += 1
 				case .Bishop:
 					to_bb = magic_bishop_moves(from, occ)
 					mobility := pop_count(to_bb)
-					mg[us] += MG_BISHOP_MOBILITY[mobility]
-					eg[us] += EG_BISHOP_MOBILITY[mobility]
+					scores[us] += BISHOP_MOBILITY[mobility]
+					when TRACING do trace.bishop_mobility[us][mobility] += 1
 
 					bishop_pair += {square_colour(from)}
 				case .Rook:
 					to_bb = magic_rook_moves(from, occ)
 					mobility := pop_count(to_bb)
-					mg[us] += MG_ROOK_MOBILITY[mobility]
-					eg[us] += EG_ROOK_MOBILITY[mobility]
+					scores[us] += ROOK_MOBILITY[mobility]
+					when TRACING do trace.rook_mobility[us][mobility] += 1
 
 					file := SQ_MASKS[from].file
 					if pawns_us & file == 0 {
 						if pawns_them & file == 0 {
-							mg[us] += ROOK_OPEN_FILE
+							scores[us] += ROOK_OPEN_FILE
+							when TRACING do trace.rook_open[us] += 1
 						} else {
-							mg[us] += ROOK_SEMI_OPEN_FILE
+							scores[us] += ROOK_SEMI_OPEN_FILE
+							when TRACING do trace.rook_semi_open[us] += 1
 						}
 					}
 				case .Queen:
 					to_bb = magic_queen_moves(from, occ)
 					mobility := pop_count(to_bb)
-					mg[us] += MG_QUEEN_MOBILITY[mobility]
-					eg[us] += EG_QUEEN_MOBILITY[mobility]
+					scores[us] += QUEEN_MOBILITY[mobility]
+					when TRACING do trace.queen_mobility[us][mobility] += 1
 				case .King:
 					to_bb = KING_TABLE[from]
 				}
@@ -192,25 +301,36 @@ evaluate :: proc(position: ^Position) -> int {
 		}
 
 		if bishop_pair == {.White, .Black} {
-			mg[us] += MG_BISHOP_PAIR_WEIGHT
-			eg[us] += EG_BISHOP_PAIR_WEIGHT
+			scores[us] += BISHOP_PAIR_WEIGHT
+			when TRACING do trace.bishop_pair[us] = true
 		}
 
-		eval_pawn_structure(position, us, &mg, &eg)
+		scores[us] += eval_pawn_structure(position, us)
 
 		// king danger from perspective of "us" attack strength
 		zone_attack_units = min(zone_attack_units, len(ZONE_ATTACK_WEIGHT) - 1)
 		zone_attackers := ZONE_ATTACK_WEIGHT[zone_attack_units]
-		mg[us] += zone_attackers * zone_attack_density / 5
+		king_danger[us] += zone_attackers * zone_attack_density / 5
+
+		when TRACING {
+			trace.attack_units[us] = zone_attack_units
+			trace.zone_attack_density[us] = zone_attack_density
+		}
 	}
+
+	scores[us] += TEMPO_BONUS
 
 	// phase clamping
 	phase = min(phase, 24)
 	phase = max(phase, 0)
 
-	mg_eval := mg[us] - mg[them] + MG_TEMPO_BONUS
-	eg_eval := eg[us] - eg[them] + EG_TEMPO_BONUS
+	when TRACING {
+		trace.phase = phase
+	}
 
+	eval := scores[us] - scores[them]
+	mg_eval := int(score_mg(eval)) + king_danger[us] - king_danger[them]
+	eg_eval := int(score_eg(eval))
 	return (mg_eval * phase + eg_eval * (24 - phase)) / 24
 }
 
@@ -220,7 +340,7 @@ get_king_zone :: proc(king_sq: int, side: Colour) -> u64 {
 	return zone
 }
 
-eval_pawn_structure :: proc(position: ^Position, us: Colour, mg, eg: ^[Colour]int) {
+eval_pawn_structure :: proc(position: ^Position, us: Colour) -> (score: Score) {
 	them := toggle(us)
 	pawns_us := position.pieces[us][.Pawn]
 	pawns_them := position.pieces[them][.Pawn]
@@ -246,18 +366,20 @@ eval_pawn_structure :: proc(position: ^Position, us: Colour, mg, eg: ^[Colour]in
 			ahead_mask <<= uint(8 * rank_idx + 8)
 			behind_mask >>= uint(8 * (7 - rank_idx))
 			pushed_distance = rank_idx
-			sentry_mask = bitboard(sq + 17) | bitboard(sq + 15)
+			sentry_mask = bitboard(sq + 17) &~ H_FILE
+			sentry_mask |= bitboard(sq + 15) &~ A_FILE
 		} else {
 			pushed_distance = 7 - rank_idx
 			ahead_mask >>= uint(8 * pushed_distance + 8)
 			behind_mask <<= uint(8 * rank_idx)
-			sentry_mask = bitboard(sq - 17) | bitboard(sq - 15)
+			sentry_mask = bitboard(sq - 17) &~ A_FILE
+			sentry_mask |= bitboard(sq - 15) &~ H_FILE
 		}
 
 		defenders := pawns_us & pawn_attacks(them, bitboard(sq))
 		if defenders != 0 {
-			mg[us] += MG_CONNECTED_PAWN
-			eg[us] += EG_CONNECTED_PAWN
+			score += CONNECTED_PAWN
+			when TRACING do trace.connected_pawns[us] += 1
 		}
 
 		if (file_left | file_right) & pawns_us == 0 {
@@ -265,185 +387,199 @@ eval_pawn_structure :: proc(position: ^Position, us: Colour, mg, eg: ^[Colour]in
 		}
 
 		if ahead_mask & pawns_them == 0 {
-			mg[us] += MG_PASSED_PAWN[pushed_distance]
-			eg[us] += EG_PASSED_PAWN[pushed_distance]
+			score += PASSED_PAWN[pushed_distance]
+			when TRACING do trace.passed_pawns[us][pushed_distance] += 1
 
 			if defenders != 0 {
-				mg[us] += MG_CONNECTED_PASSED_PAWN[pushed_distance]
-				eg[us] += EG_CONNECTED_PASSED_PAWN[pushed_distance]
+				score += CONNECTED_PASSED_PAWN[pushed_distance]
+				when TRACING do trace.connected_passed[us][pushed_distance] += 1
 			}
 		}
 
 		if behind_mask & pawns_us == 0 && sentry_mask & pawns_them != 0 {
-			mg[us] -= MG_BACKWARD_PAWN_PENALTY
-			eg[us] -= EG_BACKWARD_PAWN_PENALTY
+			score -= BACKWARD_PAWN_PENALTY
+			when TRACING do trace.backward_pawns[us] += 1
 		}
 	}
 
 	for file in 0..<8 {
 		count := file_count[file]
-
-		mg[us] -= MG_DOUBLED_PAWN_PENALTY[min(count, 4)]
-		eg[us] -= EG_DOUBLED_PAWN_PENALTY[min(count, 4)]
+		score -= DOUBLED_PAWN_PENALTY[min(count, 4)]
+		when TRACING do trace.doubled_pawns[us][file] = min(count, 4)
 
 		if is_isolated[file] {
-			mg[us] -= MG_ISOLATED_PAWN_PENALTY
-			eg[us] -= EG_ISOLATED_PAWN_PENALTY
+			score -= ISOLATED_PAWN_PENALTY
+			when TRACING do trace.isolated_pawns[us] += 1
 
 			if count > 1 {
-				mg[us] -= MG_ISOLATED_DOUBLED_PENALTY
-				eg[us] -= EG_ISOLATED_DOUBLED_PENALTY
+				score -= ISOLATED_DOUBLED_PENALTY
+				when TRACING do trace.isolated_doubled[us] += 1
 			}
 		}
 	}
+
+	return
 }
 
-mg_piece_sq_tbl: [PieceType][64]int = {
-	.Pawn = mg_pawn_tbl,
-	.Knight = mg_knight_tbl,
-	.Bishop = mg_bishop_tbl,
-	.Rook = mg_rook_tbl,
-	.Queen = mg_queen_tbl,
-	.King = mg_king_tbl,
+evaluate_trace :: proc(t: Trace) -> int {
+	scores: [Colour]Score
+	us := t.turn
+	them := toggle(us)
+
+	for piece, sq in t.pieces {
+		if piece == NIL_PIECE do continue
+		
+		scores[piece.colour] += piece_score[piece.type]
+		scores[piece.colour] += piece_sq_tbl[piece.type][sq ~ 56]
+	}
+
+	for c in Colour {
+		for n, i in t.knight_mobility[c] do scores[c] += Score(n) * KNIGHT_MOBILITY[i]
+		for n, i in t.bishop_mobility[c] do scores[c] += Score(n) * BISHOP_MOBILITY[i]
+		for n, i in t.rook_mobility[c]   do scores[c] += Score(n) * ROOK_MOBILITY[i]
+		for n, i in t.queen_mobility[c]  do scores[c] += Score(n) * QUEEN_MOBILITY[i]
+
+		scores[c] += Score(t.rook_open[c])      * ROOK_OPEN_FILE
+		scores[c] += Score(t.rook_semi_open[c]) * ROOK_SEMI_OPEN_FILE
+		if t.bishop_pair[c] do scores[c] += BISHOP_PAIR_WEIGHT
+
+		scores[c] -= Score(t.isolated_pawns[c])   * ISOLATED_PAWN_PENALTY
+		scores[c] -= Score(t.isolated_doubled[c]) * ISOLATED_DOUBLED_PENALTY
+		scores[c] -= Score(t.backward_pawns[c])   * BACKWARD_PAWN_PENALTY
+		scores[c] += Score(t.connected_pawns[c])  * CONNECTED_PAWN
+
+		for rank in 0..<8 {
+			scores[c] += Score(t.passed_pawns[c][rank])    * PASSED_PAWN[rank]
+			scores[c] += Score(t.connected_passed[c][rank]) * CONNECTED_PASSED_PAWN[rank]
+		}
+		for file in 0..<8 {
+			scores[c] -= DOUBLED_PAWN_PENALTY[t.doubled_pawns[c][file]]
+		}
+	}
+
+	scores[us] += TEMPO_BONUS
+
+	eval := scores[us] - scores[them]
+
+	attack_us   := min(t.attack_units[us],   len(ZONE_ATTACK_WEIGHT) - 1)
+	attack_them := min(t.attack_units[them],  len(ZONE_ATTACK_WEIGHT) - 1)
+	king_danger_us   := ZONE_ATTACK_WEIGHT[attack_us]   * t.zone_attack_density[us]   / 5
+	king_danger_them := ZONE_ATTACK_WEIGHT[attack_them] * t.zone_attack_density[them] / 5
+
+	mg_eval := int(score_mg(eval)) + king_danger_us - king_danger_them
+	eg_eval := int(score_eg(eval))
+
+	return (mg_eval * t.phase + eg_eval * (24 - t.phase)) / 24
 }
 
-eg_piece_sq_tbl: [PieceType][64]int = {
-	.Pawn = eg_pawn_tbl,
-	.Knight = eg_knight_tbl,
-	.Bishop = eg_bishop_tbl,
-	.Rook = eg_rook_tbl,
-	.Queen = eg_queen_tbl,
-	.King = eg_king_tbl,
+// Verifies the packed Score round-trip and that addition/subtraction of packed
+// scores matches the same operations done independently on mg and eg.
+@(test)
+score_packing :: proc(t: ^testing.T) {
+	cases := [][2]i16{
+		{0, 0}, {1, 1}, {-1, -1},
+		{100, 200}, {-100, 200}, {100, -200}, {-100, -200},
+		{-1, 32767}, {32767, -1},
+	}
+	for c in cases {
+		mg, eg := c[0], c[1]
+		s := S(mg, eg)
+		if !testing.expect_value(t, score_mg(s), mg) do return
+		if !testing.expect_value(t, score_eg(s), eg) do return
+	}
+
+	// Arithmetic: packed add/subtract must match independent mg/eg operations.
+	check :: proc(t: ^testing.T, a, b: Score) -> bool {
+		sum := a + b
+		if !testing.expect_value(t, score_mg(sum), score_mg(a) + score_mg(b)) do return false
+		if !testing.expect_value(t, score_eg(sum), score_eg(a) + score_eg(b)) do return false
+		diff := a - b
+		if !testing.expect_value(t, score_mg(diff), score_mg(a) - score_mg(b)) do return false
+		if !testing.expect_value(t, score_eg(diff), score_eg(a) - score_eg(b)) do return false
+		return true
+	}
+	if !check(t, S(100, 200), S(50, 30))   do return
+	if !check(t, S(-50, 100), S(75, -20))  do return
+	if !check(t, S(0, 0),     S(0, 0))     do return
+	if !check(t, S(500, 900), S(-300, 400)) do return
+	// Mobility extremes: min and max entries cancel cleanly
+	if !check(t, KNIGHT_MOBILITY[0], KNIGHT_MOBILITY[len(KNIGHT_MOBILITY)-1]) do return
+	if !check(t, ROOK_MOBILITY[len(ROOK_MOBILITY)-1], ROOK_MOBILITY[0])       do return
 }
 
-mg_pawn_tbl: [64]int = {
-	 0,  0,  0,  0,  0,  0,  0,  0,
-	50, 50, 50, 50, 50, 50, 50, 50,
-	10, 10, 20, 30, 30, 20, 10, 10,
-	 5,  5, 10, 25, 25, 10,  5,  5,
-	 0,  0,  0, 20, 20,  0,  0,  0,
-	 5, -5,-10,  0,  0,-10, -5,  5,
-	 5, 10, 10,-20,-20, 10, 10,  5,
-	 0,  0,  0,  0,  0,  0,  0,  0,
+// Accumulates a packed Score for a worst-case pile of terms and verifies it
+// matches an i32 reference. A mismatch means mg or eg silently overflowed i16.
+@(test)
+score_accumulation :: proc(t: ^testing.T) {
+	acc: Score
+	ref_mg, ref_eg: i32
+
+	add :: proc(acc: ^Score, ref_mg, ref_eg: ^i32, s: Score, n: int = 1) {
+		for _ in 0..<n {
+			acc^    += s
+			ref_mg^ += i32(score_mg(s))
+			ref_eg^ += i32(score_eg(s))
+		}
+	}
+
+	tbl_max :: proc(tbl: [64]Score) -> (max_s: Score) {
+		for s in tbl {
+			max_s = max(max_s, s)
+		}
+
+		return
+	}
+
+	// Starting material on highest value PSQT squares
+	add(&acc, &ref_mg, &ref_eg, piece_score[.Pawn]   + tbl_max(pawn_tbl), 8)
+	add(&acc, &ref_mg, &ref_eg, piece_score[.Knight] + tbl_max(knight_tbl), 2)
+	add(&acc, &ref_mg, &ref_eg, piece_score[.Bishop] + tbl_max(bishop_tbl), 2)
+	add(&acc, &ref_mg, &ref_eg, piece_score[.Rook]   + tbl_max(rook_tbl), 2)
+	add(&acc, &ref_mg, &ref_eg, piece_score[.Queen]  + tbl_max(queen_tbl), 1)
+	add(&acc, &ref_mg, &ref_eg, piece_score[.King]   + tbl_max(king_tbl), 1)
+
+	// Max mobility for each piece type
+	add(&acc, &ref_mg, &ref_eg, KNIGHT_MOBILITY[len(KNIGHT_MOBILITY)-1], 2)
+	add(&acc, &ref_mg, &ref_eg, BISHOP_MOBILITY[len(BISHOP_MOBILITY)-1], 2)
+	add(&acc, &ref_mg, &ref_eg, ROOK_MOBILITY[len(ROOK_MOBILITY)-1],     2)
+	add(&acc, &ref_mg, &ref_eg, QUEEN_MOBILITY[len(QUEEN_MOBILITY)-1],   9)
+
+	// All structural bonuses active
+	add(&acc, &ref_mg, &ref_eg, BISHOP_PAIR_WEIGHT)
+	add(&acc, &ref_mg, &ref_eg, ROOK_OPEN_FILE,           2)
+	add(&acc, &ref_mg, &ref_eg, PASSED_PAWN[6],           8)
+	add(&acc, &ref_mg, &ref_eg, CONNECTED_PASSED_PAWN[6], 8)
+	add(&acc, &ref_mg, &ref_eg, CONNECTED_PAWN,           8)
+	add(&acc, &ref_mg, &ref_eg, TEMPO_BONUS)
+
+	// king danger
+	king_danger := ZONE_ATTACK_WEIGHT[len(ZONE_ATTACK_WEIGHT)-1] * 200 / 5
+	add(&acc, &ref_mg, &ref_eg, S(i16(king_danger), 0))
+
+	if !testing.expect(t, ref_mg >= -32768 && ref_mg <= 32767, "mg overflows i16 — weights need adjustment") do return
+	if !testing.expect(t, ref_eg >= -32768 && ref_eg <= 32767, "eg overflows i16 — weights need adjustment") do return
+
+	testing.expect_value(t, score_mg(acc), i16(ref_mg))
+	testing.expect_value(t, score_eg(acc), i16(ref_eg))
 }
 
-eg_pawn_tbl: [64]int = {
-	 0,  0,  0,  0,  0,  0,  0,  0,
-	50, 50, 50, 50, 50, 50, 50, 50,
-	10, 10, 20, 30, 30, 20, 10, 10,
-	 5,  5, 10, 25, 25, 10,  5,  5,
-	 0,  0,  0, 20, 20,  0,  0,  0,
-	 5, -5,-10,  0,  0,-10, -5,  5,
-	 5, 10, 10,-20,-20, 10, 10,  5,
-	 0,  0,  0,  0,  0,  0,  0,  0,
-}
+// Verifies that the evaluation function is symmetric with respect to colour by mirroring the position
+@(test)
+mirror_eval :: proc(t: ^testing.T) {
+	init_piece_tables()
 
-mg_knight_tbl: [64]int = {
-	-50,-40,-30,-30,-30,-30,-40,-50,
-	-40,-20,  0,  0,  0,  0,-20,-40,
-	-30,  0, 10, 15, 15, 10,  0,-30,
-	-30,  5, 15, 20, 20, 15,  5,-30,
-	-30,  0, 15, 20, 20, 15,  0,-30,
-	-30,  5, 10, 15, 15, 10,  5,-30,
-	-40,-20,  0,  5,  5,  0,-20,-40,
-	-50,-40,-30,-30,-30,-30,-40,-50,
-}
+	for fen, i in BENCH_FENS {
+		position, ok := parse_fen(fen)
+		if !ok do continue
 
-eg_knight_tbl: [64]int = {
-	-50,-40,-30,-30,-30,-30,-40,-50,
-	-40,-20,  0,  0,  0,  0,-20,-40,
-	-30,  0, 10, 15, 15, 10,  0,-30,
-	-30,  5, 15, 20, 20, 15,  5,-30,
-	-30,  0, 15, 20, 20, 15,  0,-30,
-	-30,  5, 10, 15, 15, 10,  5,-30,
-	-40,-20,  0,  5,  5,  0,-20,-40,
-	-50,-40,-30,-30,-30,-30,-40,-50,
-}
+		eval1 := evaluate(&position)
+		mirrored_pos := mirror_colour(position)
+		eval2 := evaluate(&mirrored_pos)
 
-mg_bishop_tbl: [64]int = {
-	-20,-10,-10,-10,-10,-10,-10,-20,
-	-10,  0,  0,  0,  0,  0,  0,-10,
-	-10,  0,  5, 10, 10,  5,  0,-10,
-	-10,  5,  5, 10, 10,  5,  5,-10,
-	-10,  0, 10, 10, 10, 10,  0,-10,
-	-10, 10, 10, 10, 10, 10, 10,-10,
-	-10,  5,  0,  0,  0,  0,  5,-10,
-	-20,-10,-10,-10,-10,-10,-10,-20,
-}
+		if !testing.expect_value(t, eval2, eval1) {
+			log.infof("Asymmetrically evaluated {}", fen)
 
-eg_bishop_tbl: [64]int = {
-	-20,-10,-10,-10,-10,-10,-10,-20,
-	-10,  0,  0,  0,  0,  0,  0,-10,
-	-10,  0,  5, 10, 10,  5,  0,-10,
-	-10,  5,  5, 10, 10,  5,  5,-10,
-	-10,  0, 10, 10, 10, 10,  0,-10,
-	-10, 10, 10, 10, 10, 10, 10,-10,
-	-10,  5,  0,  0,  0,  0,  5,-10,
-	-20,-10,-10,-10,-10,-10,-10,-20,
-}
-
-mg_rook_tbl: [64]int = {
-	  0,  0,  0,  0,  0,  0,  0,  0,
-	  5, 10, 10, 10, 10, 10, 10,  5,
-	 -5,  0,  0,  0,  0,  0,  0, -5,
-	 -5,  0,  0,  0,  0,  0,  0, -5,
-	 -5,  0,  0,  0,  0,  0,  0, -5,
-	 -5,  0,  0,  0,  0,  0,  0, -5,
-	 -5,  0,  0,  0,  0,  0,  0, -5,
-	  0,  0,  0,  5,  5,  0,  0,  0
-}
-
-eg_rook_tbl: [64]int = {
-	  0,  0,  0,  0,  0,  0,  0,  0,
-	  5, 10, 10, 10, 10, 10, 10,  5,
-	 -5,  0,  0,  0,  0,  0,  0, -5,
-	 -5,  0,  0,  0,  0,  0,  0, -5,
-	 -5,  0,  0,  0,  0,  0,  0, -5,
-	 -5,  0,  0,  0,  0,  0,  0, -5,
-	 -5,  0,  0,  0,  0,  0,  0, -5,
-	  0,  0,  0,  5,  5,  0,  0,  0
-}
-
-mg_queen_tbl: [64]int = {
-	-20,-10,-10, -5, -5,-10,-10,-20,
-	-10,  0,  0,  0,  0,  0,  0,-10,
-	-10,  0,  5,  5,  5,  5,  0,-10,
-	 -5,  0,  5,  5,  5,  5,  0, -5,
-	  0,  0,  5,  5,  5,  5,  0, -5,
-	-10,  5,  5,  5,  5,  5,  0,-10,
-	-10,  0,  5,  0,  0,  0,  0,-10,
-	-20,-10,-10, -5, -5,-10,-10,-20
-}
-
-eg_queen_tbl: [64]int = {
-	-20,-10,-10, -5, -5,-10,-10,-20,
-	-10,  0,  0,  0,  0,  0,  0,-10,
-	-10,  0,  5,  5,  5,  5,  0,-10,
-	 -5,  0,  5,  5,  5,  5,  0, -5,
-	  0,  0,  5,  5,  5,  5,  0, -5,
-	-10,  5,  5,  5,  5,  5,  0,-10,
-	-10,  0,  5,  0,  0,  0,  0,-10,
-	-20,-10,-10, -5, -5,-10,-10,-20
-}
-
-mg_king_tbl: [64]int = {
-	-30,-40,-40,-50,-50,-40,-40,-30,
-	-30,-40,-40,-50,-50,-40,-40,-30,
-	-30,-40,-40,-50,-50,-40,-40,-30,
-	-30,-40,-40,-50,-50,-40,-40,-30,
-	-20,-30,-30,-40,-40,-30,-30,-20,
-	-10,-20,-20,-20,-20,-20,-20,-10,
-	 20, 20,  0,  0,  0,  0, 20, 20,
-	 20, 30, 10,  0,  0, 10, 30, 20
-}
-
-eg_king_tbl: [64]int = {
-	-50,-40,-30,-30,-30,-30,-40,-50,
-	-40,-20,  0,  0,  0,  0,-20,-40,
-	-30,  0, 10, 15, 15, 10,  0,-30,
-	-30,  5, 15, 20, 20, 15,  5,-30,
-	-30,  0, 15, 20, 20, 15,  0,-30,
-	-30,  5, 10, 15, 15, 10,  5,-30,
-	-40,-20,  0,  5,  5,  0,-20,-40,
-	-50,-40,-30,-30,-30,-30,-40,-50,
+			return
+		}
+	}
 }

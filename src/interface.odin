@@ -86,7 +86,9 @@ uci_loop :: proc() {
 			depth := strconv.parse_int(depth_str) or_else BENCH_DEPTH
 			bench(depth)
 		case "print":
-			display(position)
+			print(position)
+		case "eval":
+			fmt.println(evaluate(&position))
 		}
 	}
 

@@ -3,6 +3,7 @@ package blunderbuss
 import "core:strings"
 import "core:unicode"
 import "core:strconv"
+import "base:intrinsics"
 
 STARTING_FEN :: "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
 
@@ -113,6 +114,39 @@ fill_mailbox :: proc(position: ^Position) {
 
 is_in_check :: proc(position: ^Position, atk: u64) -> bool {
 	return atk & position.pieces[position.turn][.King] != 0
+}
+
+mirror_colour :: proc(pos: Position) -> (new_pos: Position) {
+
+	for c1 in Colour {
+		c2 := toggle(c1)
+
+		for p in PieceType {
+			new_pos.pieces[c1][p] = intrinsics.byte_swap(pos.pieces[c2][p])
+		}
+
+		new_pos.occupancy[c1] = intrinsics.byte_swap(pos.occupancy[c2])
+	}
+
+	fill_mailbox(&new_pos)
+	new_pos.turn = toggle(pos.turn)	
+
+	castling := transmute(u8)pos.castling
+	castling = (castling & 0xC) >> 2 | (castling & 0x3) << 2
+	new_pos.castling = transmute(bit_set[Castling])castling
+
+	new_pos.ep_sq = pos.ep_sq ~ 56
+	new_pos.ep_target = pos.ep_target ~ 56
+	new_pos.can_ep = pos.can_ep
+
+	new_pos.halfmove_clk = pos.halfmove_clk
+	new_pos.fullmove_clk = pos.fullmove_clk
+	new_pos.ply = pos.ply
+	new_pos.last_irreversible_ply = pos.last_irreversible_ply
+
+	new_pos.hash = zobrist_hash(new_pos)
+
+	return
 }
 
 parse_fen :: proc(fen: string) -> (position: Position, ok: bool) {

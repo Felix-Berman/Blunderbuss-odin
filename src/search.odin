@@ -40,6 +40,15 @@ FUTILITY_MARGIN := [MAX_DEPTH]int{
 
 LMR_TABLE: [64][64]int
 
+piece_value: [PieceType]int = {
+	.Pawn = 100,
+	.Knight = 300,
+	.Bishop =  350,
+	.Rook = 500,
+	.Queen = 900,
+	.King = 30_000,
+}
+
 // global tables
 t_table: TTable
 continuation_history: [PieceType][64][64][64]int
@@ -706,7 +715,7 @@ q_search :: proc(
 				see_val := see(&data.position, move)
 				recursive_see_val := recursive_see_root(&data.position, move)
 				if see_val != recursive_see_val {
-					display(data.position)
+					print(data.position)
 					fmt.println(to_string(move, context.temp_allocator))
 					fmt.println(see_val, "!=", recursive_see_val)
 					panic("static exchange evaluation error")

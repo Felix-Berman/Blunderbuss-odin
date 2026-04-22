@@ -166,7 +166,7 @@ make_move :: proc(position: ^Position, move: Move) {
 		if position.hash != hash {
 			fmt.println("Discrepancy between generated and updated hash")
 			fmt.println(move_str)
-			display(position^)
+			print(position^)
 
 			for rand, i in ZOBRIST_RANDS {
 				if hash ~ rand == position.hash {
@@ -313,7 +313,7 @@ make_null_move :: proc(position: ^Position) {
 		hash := zobrist_hash(position^)
 		if position.hash != hash {
 			fmt.println("Discrepancy between generated and updated hash")
-			display(position^)
+			print(position^)
 
 			for rand, i in ZOBRIST_RANDS {
 				if hash ~ rand == position.hash {

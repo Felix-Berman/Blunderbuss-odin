@@ -36,7 +36,7 @@ to_string_piece :: proc(piece: Piece) -> string {
 	return fmt.tprintf("%r", char)
 }
 
-display_bitboard :: proc(bitboard: u64) {
+print_bitboard :: proc(bitboard: u64) {
     builder := strings.builder_make()
 	defer strings.builder_destroy(&builder)
 
@@ -55,7 +55,7 @@ display_bitboard :: proc(bitboard: u64) {
     fmt.println(strings.to_string(builder))
 }
 
-display_board :: proc(position: Position) {
+print_board :: proc(position: Position) {
     builder := strings.builder_make()
 	defer strings.builder_destroy(&builder)
 
@@ -141,7 +141,7 @@ to_string :: proc {
 	to_string_movelist,
 }
 
-display :: proc {
-	display_bitboard,
-	display_board,
+print :: proc {
+	print_bitboard,
+	print_board,
 }

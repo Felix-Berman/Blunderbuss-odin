@@ -61,7 +61,11 @@ perft_divide :: proc(position: ^Position, depth: int) {
 	fmt.println(total_nodes)
 }
 
+// perft tests are slow and so disabled by default.
+TEST_PERFT :: #config(TEST_PERFT, false)
 test_range :: [2]int{1, 126}
+
+when TEST_PERFT {
 
 @(test)
 perft_suite :: proc(t: ^testing.T) {
@@ -110,4 +114,6 @@ perft_suite :: proc(t: ^testing.T) {
 			log.infof("depth {}: \033[32;1mSUCCESS\033[0m", depth)
 		}
 	}
+}
+
 }

@@ -118,8 +118,8 @@ evaluate :: proc(position: ^Position) -> int {
 	occ := occupied(position)
 	phase := 0
 
-	for c in Colour {
-		them := toggle(c)
+	for us in Colour {
+		them := toggle(us)
 		pawns_us := position.pieces[us][.Pawn]
 		pawns_them := position.pieces[them][.Pawn]
 		pawn_controlled := pawn_attacks(them, pawns_them)
@@ -129,42 +129,42 @@ evaluate :: proc(position: ^Position) -> int {
 		king_zone := get_king_zone(king_sq_them, them)
 		zone_attack_units, zone_attack_density: int
 
-		for bb, piece in position.pieces[c] {
+		for bb, piece in position.pieces[us] {
 			from_bb := bb
 			for from_bb > 0 {
 				from := pop_lsb(&from_bb)
 
 				// count material
 				lookup_sq := from
-				if c == .White {
+				if us == .White {
 					lookup_sq ~= 56 // PSQT defined from black perspective
 				}
 
-				mg[c] += piece_value[piece] + mg_piece_sq_tbl[piece][lookup_sq]
-				eg[c] += piece_value[piece] + eg_piece_sq_tbl[piece][lookup_sq]
+				mg[us] += piece_value[piece] + mg_piece_sq_tbl[piece][lookup_sq]
+				eg[us] += piece_value[piece] + eg_piece_sq_tbl[piece][lookup_sq]
 				phase += piece_phase[piece]
 
 				to_bb: u64
 				switch piece {
 				case .Pawn:
-					to_bb = pawn_attacks(c, bitboard(from))
+					to_bb = pawn_attacks(us, bitboard(from))
 				case .Knight:
 					to_bb = KNIGHT_TABLE[from]
 					mobility := pop_count(to_bb)
-					mg[c] += MG_KNIGHT_MOBILITY[mobility]
-					eg[c] += EG_KNIGHT_MOBILITY[mobility]
+					mg[us] += MG_KNIGHT_MOBILITY[mobility]
+					eg[us] += EG_KNIGHT_MOBILITY[mobility]
 				case .Bishop:
 					to_bb = magic_bishop_moves(from, occ)
 					mobility := pop_count(to_bb)
-					mg[c] += MG_BISHOP_MOBILITY[mobility]
-					eg[c] += EG_BISHOP_MOBILITY[mobility]
+					mg[us] += MG_BISHOP_MOBILITY[mobility]
+					eg[us] += EG_BISHOP_MOBILITY[mobility]
 
 					bishop_pair += {square_colour(from)}
 				case .Rook:
 					to_bb = magic_rook_moves(from, occ)
 					mobility := pop_count(to_bb)
-					mg[c] += MG_ROOK_MOBILITY[mobility]
-					eg[c] += EG_ROOK_MOBILITY[mobility]
+					mg[us] += MG_ROOK_MOBILITY[mobility]
+					eg[us] += EG_ROOK_MOBILITY[mobility]
 
 					file := SQ_MASKS[from].file
 					if pawns_us & file == 0 {
@@ -177,8 +177,8 @@ evaluate :: proc(position: ^Position) -> int {
 				case .Queen:
 					to_bb = magic_queen_moves(from, occ)
 					mobility := pop_count(to_bb)
-					mg[c] += MG_QUEEN_MOBILITY[mobility]
-					eg[c] += EG_QUEEN_MOBILITY[mobility]
+					mg[us] += MG_QUEEN_MOBILITY[mobility]
+					eg[us] += EG_QUEEN_MOBILITY[mobility]
 				case .King:
 					to_bb = KING_TABLE[from]
 				}
@@ -192,16 +192,16 @@ evaluate :: proc(position: ^Position) -> int {
 		}
 
 		if bishop_pair == {.White, .Black} {
-			mg[c] += MG_BISHOP_PAIR_WEIGHT
-			eg[c] += EG_BISHOP_PAIR_WEIGHT
+			mg[us] += MG_BISHOP_PAIR_WEIGHT
+			eg[us] += EG_BISHOP_PAIR_WEIGHT
 		}
 
-		eval_pawn_structure(position, c, &mg, &eg)
+		eval_pawn_structure(position, us, &mg, &eg)
 
 		// king danger from perspective of "us" attack strength
 		zone_attack_units = min(zone_attack_units, len(ZONE_ATTACK_WEIGHT) - 1)
 		zone_attackers := ZONE_ATTACK_WEIGHT[zone_attack_units]
-		mg[c] += zone_attackers * zone_attack_density / 5
+		mg[us] += zone_attackers * zone_attack_density / 5
 	}
 
 	// phase clamping
@@ -250,7 +250,7 @@ eval_pawn_structure :: proc(position: ^Position, us: Colour, mg, eg: ^[Colour]in
 		} else {
 			pushed_distance = 7 - rank_idx
 			ahead_mask >>= uint(8 * pushed_distance + 8)
-			behind_mask >>= uint(8 * rank_idx)
+			behind_mask <<= uint(8 * rank_idx)
 			sentry_mask = bitboard(sq - 17) | bitboard(sq - 15)
 		}
 

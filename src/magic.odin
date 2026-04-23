@@ -20,7 +20,8 @@ Magic :: struct {
 	shift: uint,
 }
 
-init_piece_tables :: proc() {
+@(init)
+init_piece_tables :: proc "contextless" () {
 	offset: uint
 	for sq in 0..<64 {
 		rank := SQ_MASKS[sq].rank
@@ -66,18 +67,17 @@ when PEXT {
 	}
 
 	@(enable_target_feature="bmi2")
-	init_magic :: proc(
+	init_magic :: proc "contextless" (
 		sq: int,
 		offset: ^uint,
 		magic: ^Magic,
-		move_proc: proc(int, u64) -> u64
+		move_proc: proc "contextless" (int, u64) -> u64,
 	) {
 		bit_count := pop_count(magic.mask)
 		table_size: uint = 1 << uint(bit_count)
 
 		magic.offset = offset^
 		offset^ += table_size
-		assert(offset^ < len(SLIDER_TABLE))
 
 		for i in 0..<table_size {
 			occ := x86._pdep_u64(u64(i), magic.mask)
@@ -86,7 +86,7 @@ when PEXT {
 	}
 
 } else {
-	magic_idx :: proc(m: Magic, occ: u64) -> uint {
+	magic_idx :: proc "contextless" (m: Magic, occ: u64) -> uint {
 		return m.offset + uint(((occ & m.mask) * m.mul) >> m.shift)
 	}
 
@@ -104,11 +104,11 @@ when PEXT {
 
 	rng_state: u64 = MAGIC_SEED
 
-	init_magic :: proc(
+	init_magic :: proc "contextless" (
 		sq: int,
 		offset: ^uint,
 		magic: ^Magic,
-		move_proc: proc(int, u64) -> u64
+		move_proc: proc "contextless" (int, u64) -> u64,
 	) {
 		temp_occ, temp_moves: [4096]u64
 
@@ -118,7 +118,6 @@ when PEXT {
 
 		table_size: uint = 1 << bit_count
 		offset^ += table_size
-		assert(offset^ < len(SLIDER_TABLE))
 
 		num_subsets := 0
 		occ := magic.mask
@@ -157,7 +156,7 @@ when PEXT {
 }
 
 // sparse magics are more likely to be successful so 3 rands are intersected
-next_magic :: proc(state: ^u64) -> u64 {
+next_magic :: proc "contextless" (state: ^u64) -> u64 {
 	magic := xor_shift(state)
 	magic &= xor_shift(state)
 	return magic & xor_shift(state)

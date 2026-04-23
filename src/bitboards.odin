@@ -85,11 +85,11 @@ pop_lsb :: proc(bitboard: ^u64) -> int {
     return sq
 }
 
-mirror_vertically :: proc(bitboard: u64) -> u64 {
+mirror_vertically :: proc "contextless" (bitboard: u64) -> u64 {
     return intrinsics.byte_swap(bitboard)
 }
 
-mirror_horizontally :: proc(bitboard: u64) -> u64 {
+mirror_horizontally :: proc "contextless" (bitboard: u64) -> u64 {
     bb := bitboard
     k1 :: 0x5555555555555555
     k2 :: 0x3333333333333333
@@ -109,6 +109,6 @@ square_colour :: proc(sq: int) -> Colour {
 	}
 }
 
-pop_count :: proc(bb: u64) -> int {
+pop_count :: proc "contextless" (bb: u64) -> int {
 	return int(intrinsics.count_ones(bb))
 }

@@ -20,7 +20,5 @@ main :: proc() {
 		}
 	}
 
-	init_piece_tables()
-	init_lmr()
 	uci_loop()
 }

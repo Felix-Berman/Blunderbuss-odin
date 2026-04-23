@@ -143,7 +143,7 @@ gen_piece_moves :: proc(position: ^Position, masks: LegalMasks, moves: ^[dynamic
 	}
 }
 
-king_moves :: proc(king: u64) -> (move_bb: u64) {
+king_moves :: proc "contextless" (king: u64) -> (move_bb: u64) {
 	move_bb |= (king << 1) &~ H_FILE
 	move_bb |= (king << 7) &~ A_FILE
 	move_bb |= (king << 8)
@@ -155,7 +155,7 @@ king_moves :: proc(king: u64) -> (move_bb: u64) {
 	return
 }
 
-knight_moves :: proc(knight: u64) -> (move_bb: u64) {
+knight_moves :: proc "contextless" (knight: u64) -> (move_bb: u64) {
 	move_bb |= knight << 6 &~ (A_FILE | B_FILE)
 	move_bb |= knight << 15 &~ A_FILE
 	move_bb |= knight << 17 &~ H_FILE
@@ -176,11 +176,11 @@ knight_moves_sq :: proc(sq: int, _: u64) -> u64 {
 	return KNIGHT_TABLE[sq]
 }
 
-bishop_moves :: proc(sq: int, occ: u64) -> u64 {
+bishop_moves :: proc "contextless" (sq: int, occ: u64) -> u64 {
 	return diagonal_attacks(sq, occ) | antidiag_attacks(sq, occ)
 }
 
-rook_moves :: proc(sq: int, occ: u64) -> u64 {
+rook_moves :: proc "contextless" (sq: int, occ: u64) -> u64 {
 	return rank_attacks(sq, occ) | file_attacks(sq, occ)
 }
 
@@ -519,7 +519,7 @@ attackers_to :: proc(position: ^Position, sq: int) -> (attackers: [Colour]u64) {
 // calculate sliding attacks using hyperbola quintessence: 
 // https://www.chessprogramming.org/Hyperbola_Quintessence
 
-diagonal_attacks :: proc(sq: int, occ: u64) -> u64 {
+diagonal_attacks :: proc "contextless" (sq: int, occ: u64) -> u64 {
 	sq_bb  := bitboard(sq)
 	forward := occ & SQ_MASKS[sq].diagonal// remove all but relevant blockers
 	reverse := mirror_vertically(forward)
@@ -529,7 +529,7 @@ diagonal_attacks :: proc(sq: int, occ: u64) -> u64 {
 	return forward & SQ_MASKS[sq].diagonal// mask to relevant sliding axis
 }
 
-antidiag_attacks :: proc(sq: int, occ: u64) -> u64 {
+antidiag_attacks :: proc "contextless" (sq: int, occ: u64) -> u64 {
 	sq_bb := bitboard(sq)
 	forward := occ & SQ_MASKS[sq].antidiag// remove all but relevant blockers
 	reverse := mirror_vertically(forward)
@@ -539,7 +539,7 @@ antidiag_attacks :: proc(sq: int, occ: u64) -> u64 {
 	return forward & SQ_MASKS[sq].antidiag// mask to relevant sliding axis
 }
 
-file_attacks :: proc(sq: int, occ: u64) -> u64 {
+file_attacks :: proc "contextless" (sq: int, occ: u64) -> u64 {
 	sq_bb := bitboard(sq)
 	forward := occ & SQ_MASKS[sq].file// remove all but relevant blockers
 	reverse := mirror_vertically(forward)
@@ -549,7 +549,7 @@ file_attacks :: proc(sq: int, occ: u64) -> u64 {
 	return forward & SQ_MASKS[sq].file// mask to relevant sliding axis
 }
 
-rank_attacks :: proc(sq: int, occ: u64) -> u64 {
+rank_attacks :: proc "contextless" (sq: int, occ: u64) -> u64 {
 	sq_bb := bitboard(sq)
 	forward := occ & SQ_MASKS[sq].rank// remove all but relevant blockers
 	reverse := mirror_horizontally(forward)

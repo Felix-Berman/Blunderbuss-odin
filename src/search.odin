@@ -1244,7 +1244,8 @@ update_history :: proc(prev_piece: Piece, prev_move, move: Move, bonus: int) {
 	history^ += bonus - abs(bonus) * history^ / MAX_HISTORY
 }	
 
-init_lmr :: proc() {
+@(init)
+init_lmr :: proc "contextless" () {
 	for d in 0..<64 {
 		for m in 0..<64 {
 			LMR_TABLE[d][m] = int(math.ln(f32(d)) * math.ln(f32(m)))

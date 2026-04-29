@@ -20,5 +20,10 @@ main :: proc() {
 		}
 	}
 
+	when TUNING {
+		run_tuner()
+		return
+	}
+
 	uci_loop()
 }

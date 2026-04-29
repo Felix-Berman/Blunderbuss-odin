@@ -63,6 +63,10 @@ HistoryData :: struct {
 	last_irreversible_ply: int
 }
 
+piece_bb :: proc(position: ^Position, piece: PieceType) -> u64 {
+	return position.pieces[.White][piece] | position.pieces[.Black][piece]
+}
+
 starting_position :: proc() -> (position: Position) {
 	position.pieces[.White][.Pawn] = 0xff00
 	position.pieces[.White][.Knight] = 0x42

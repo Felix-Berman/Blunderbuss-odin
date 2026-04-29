@@ -6,3 +6,5 @@
 *.spall
 versions/
 sprt_log/
+tuner_log/
+training_sets/

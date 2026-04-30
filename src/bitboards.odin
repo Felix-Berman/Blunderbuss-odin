@@ -26,6 +26,9 @@ RANK_6: u64 : RANK_5 << 8
 RANK_7: u64 : RANK_6 << 8
 RANK_8: u64 : RANK_7 << 8
 
+FILES := [8]u64{H_FILE, G_FILE, F_FILE, E_FILE, D_FILE, C_FILE, B_FILE, A_FILE}
+RANKS := [8]u64{RANK_1, RANK_2, RANK_3, RANK_4, RANK_5, RANK_6, RANK_7, RANK_8}
+
 MAIN_DIAGONAL: u64 : 0x8040201008040201;
 MAIN_ANTIDIAG: u64 : 0x0102040810204080;
 
@@ -79,6 +82,10 @@ lsb :: proc(bitboard: u64) -> int {
     return int(intrinsics.count_trailing_zeros(bitboard))
 }
 
+msb :: proc(bitboard: u64) -> int {
+	return 63 - int(intrinsics.count_leading_zeros(bitboard))
+}
+
 pop_lsb :: proc(bitboard: ^u64) -> int {
     sq := lsb(bitboard^)
     bitboard^ &= bitboard^ - 1
@@ -111,4 +118,11 @@ square_colour :: proc(sq: int) -> Colour {
 
 pop_count :: proc "contextless" (bb: u64) -> int {
 	return int(intrinsics.count_ones(bb))
+}
+
+ranks_ahead :: proc(colour: Colour, rank: int) -> (bb: u64) {
+	if colour == .White do bb = FULL_BB << uint(8 * (rank + 1))
+	if colour == .Black do bb = FULL_BB >> uint(8 * (8 - rank))
+
+	return
 }

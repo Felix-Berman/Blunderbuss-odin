@@ -78,13 +78,13 @@ score_phase :: proc(s: Score, p: Phase) -> (val: i16) {
 	return
 }
 
-piece_sq_tbl: [PieceType][64]Score = {
-	.Pawn	= pawn_tbl,
-	.Knight = knight_tbl,
-	.Bishop = bishop_tbl,
-	.Rook	= rook_tbl,
-	.Queen	= queen_tbl,
-	.King	= king_tbl,
+piece_sq_tbl: [PieceType]^[64]Score = {
+	.Pawn	= &pawn_tbl,
+	.Knight = &knight_tbl,
+	.Bishop = &bishop_tbl,
+	.Rook	= &rook_tbl,
+	.Queen	= &queen_tbl,
+	.King	= &king_tbl,
 }
 
 piece_phase: [PieceType]int = {
@@ -144,7 +144,7 @@ evaluate :: proc(position: ^Position) -> int {
 
 				when TRACING {
 					trace.coeffs.material_count[piece][us] += 1
-					trace.coeffs.piece_sq_tbls[piece][from][us] = 1
+					trace.coeffs.piece_sq_tbls[piece][lookup_sq][us] = 1
 				}
 
 				to_bb: u64
@@ -493,10 +493,9 @@ score_accumulation :: proc(t: ^testing.T) {
 }
 
 // Verifies that the evaluation function is symmetric with respect to colour by mirroring the position
+when !TUNING {
 @(test)
 mirror_eval :: proc(t: ^testing.T) {
-	init_piece_tables()
-
 	for fen, i in BENCH_FENS {
 		position, ok := parse_fen(fen)
 		if !ok do continue
@@ -511,4 +510,5 @@ mirror_eval :: proc(t: ^testing.T) {
 			return
 		}
 	}
+}
 }

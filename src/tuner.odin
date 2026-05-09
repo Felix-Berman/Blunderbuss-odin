@@ -8,6 +8,7 @@ import "core:thread"
 import "core:math/rand"
 import "core:time"
 import "core:time/timezone"
+import "core:testing"
 
 TUNING :: #config(TUNING, false)
 
@@ -18,9 +19,10 @@ N_THREADS :: 8
 K_PRECISION :: 10
 BATCH_SIZE :: 16384
 MAX_EPOCHS :: 100_000
-LR_RATE :: 0.1
+LR_RATE :: 1
+LR_MIN :: 0.1
 LR_STEP_RATE :: 250
-LR_DROP_RATE :: 1
+LR_DROP_RATE :: 1.1
 REPORTING_RATE :: 20
 
 TermType :: enum{Normal, Safety, Attack}
@@ -153,9 +155,11 @@ run_tuner :: proc() {
 					(rate / math.sqrt(1e-8 + adagrad[i][.EG]))
 			}
 
+			enforce_parameter_constraints(params, c_params)
+
 			// ATTACK_UNITS: no piece should reduce the attack threat
 			au_start := offset_of(Coeffs, attacker_counts) / TERM_SIZE
-			for i in au_start..<au_start+len(ATTACK_UNITS) {
+			for i in au_start..<au_start+len(ATTACK_UNITS)+3 {
 				for p in Phase {
 					if c_params[i][p] + params[i][p] < 0 do params[i][p] = -c_params[i][p]
 				}
@@ -166,7 +170,7 @@ run_tuner :: proc() {
 					str_adagrad[k][p] += math.pow((K / 200) * str_grad[k][p] / batch_size_f, 2)
 					str_params[k][p]  += (K / 200) * (str_grad[k][p]  / BATCH_SIZE) *
 						(rate / math.sqrt(1e-8 + str_adagrad[k][p]))
-					str_params[k][p] = max(0, str_params[k][p])
+					// str_params[k][p] = max(0, str_params[k][p])
 				}
 			}
 
@@ -204,6 +208,8 @@ run_tuner :: proc() {
 		lr_dropped := epoch != 0 && epoch % LR_STEP_RATE == 0
 		if lr_dropped do rate /= LR_DROP_RATE
 
+		rate = max(rate, LR_MIN)
+
 		line := fmt.tprintfln(
 			"epoch {:4d} | error {:.6f} | rate {:.4f}{}",
 			epoch, error, rate,
@@ -217,6 +223,7 @@ run_tuner :: proc() {
 		}
 
 		if epoch % REPORTING_RATE == 0 {
+			enforce_parameter_constraints(params, c_params)
 			print_params(params, c_params, str_params, scale_params,
 				weights_path, timestamp)
 		}
@@ -224,6 +231,7 @@ run_tuner :: proc() {
 		rand.shuffle(entries[:])
 	}
 
+	enforce_parameter_constraints(params, c_params)
 	print_params(params, c_params, str_params, scale_params, weights_path, timestamp)
 }
 
@@ -285,6 +293,83 @@ build_eval_types :: proc() -> (types: [N_EVAL_TERMS]TermType) {
 	for i in attack_start ..< N_EVAL_TERMS do types[i] = .Attack
 
 	return
+}
+
+enforce_parameter_constraints :: proc(params, c_params: [][Phase]f32) {
+	material_start := int(offset_of(Coeffs, material_count) / TERM_SIZE)
+	psqt_start := int(offset_of(Coeffs, piece_sq_tbls) / TERM_SIZE)
+	pawn_material_idx := material_start + int(PieceType.Pawn)
+
+	// maintain centipawn relative eval
+	params[pawn_material_idx][.MG] = 0
+	params[pawn_material_idx][.EG] = 0
+
+	for piece in PieceType {
+		table_start := psqt_start + int(piece) * 64
+		material_idx := material_start + int(piece)
+
+		for p in Phase {
+			mean: f32
+			for sq in 0..<64 {
+				idx := table_start + sq
+				mean += c_params[idx][p] + params[idx][p]
+			}
+			mean /= 64
+
+			for sq in 0..<64 {
+				params[table_start + sq][p] -= mean
+			}
+
+			// Keep non-pawn material values equal to the average piece value.
+			// Pawn material is the fixed centipawn anchor; king material cancels.
+			if piece != .Pawn && piece != .King {
+				params[material_idx][p] += mean
+			}
+		}
+	}
+
+	params[pawn_material_idx][.MG] = 0
+	params[pawn_material_idx][.EG] = 0
+}
+
+@(test)
+tuner_parameter_constraints :: proc(t: ^testing.T) {
+	params := make([][Phase]f32, N_EVAL_TERMS)
+	c_params := make([][Phase]f32, N_EVAL_TERMS)
+	defer delete(params)
+	defer delete(c_params)
+
+	init_base_params(c_params)
+
+	material_start := int(offset_of(Coeffs, material_count) / TERM_SIZE)
+	psqt_start := int(offset_of(Coeffs, piece_sq_tbls) / TERM_SIZE)
+	pawn_material_idx := material_start + int(PieceType.Pawn)
+
+	params[pawn_material_idx][.MG] = 42
+	params[pawn_material_idx][.EG] = -17
+
+	enforce_parameter_constraints(params, c_params)
+
+	if !testing.expect_value(t, c_params[pawn_material_idx][.MG] + params[pawn_material_idx][.MG], f32(100)) do return
+	if !testing.expect_value(t, c_params[pawn_material_idx][.EG] + params[pawn_material_idx][.EG], f32(100)) do return
+
+	for piece in PieceType {
+		table_start := psqt_start + int(piece) * 64
+		for p in Phase {
+			sum: f32
+			for sq in 0..<64 {
+				sum += c_params[table_start + sq][p] + params[table_start + sq][p]
+			}
+
+			if !testing.expect(
+				t,
+				abs(sum) < 0.01,
+				fmt.tprintf("{} {} PSQT mean is not zero: {}", piece, p, sum / 64),
+			) {
+				return
+			}
+		}
+	}
 }
 
 init_base_params :: proc(c_params: [][Phase]f32) {
@@ -565,26 +650,31 @@ linear_evaluation :: proc(
 	normal_eg := f32(score_eg(entry.normal)) + eg[.Normal][.White] - eg[.Normal][.Black]
 
 	// add delta to attack units and clamp to valid range of shelter scale
-	w_mg_units := clamp(f32(score_mg(entry.attack[.White])) + mg[.Attack][.White], 0, f32(len(SHELTER_SCALE)-2))
-	w_eg_units := clamp(f32(score_eg(entry.attack[.White])) + eg[.Attack][.White], 0, f32(len(SHELTER_SCALE)-2))
-	b_mg_units := clamp(f32(score_mg(entry.attack[.Black])) + mg[.Attack][.Black], 0, f32(len(SHELTER_SCALE)-2))
-	b_eg_units := clamp(f32(score_eg(entry.attack[.Black])) + eg[.Attack][.Black], 0, f32(len(SHELTER_SCALE)-2))
+	shelter_len := f32(len(SHELTER_SCALE)-1)
+	w_mg_units := clamp(f32(score_mg(entry.attack[.White])) + mg[.Attack][.White], 0, shelter_len)
+	w_eg_units := clamp(f32(score_eg(entry.attack[.White])) + eg[.Attack][.White], 0, shelter_len)
+	b_mg_units := clamp(f32(score_mg(entry.attack[.Black])) + mg[.Attack][.Black], 0, shelter_len)
+	b_eg_units := clamp(f32(score_eg(entry.attack[.Black])) + eg[.Attack][.Black], 0, shelter_len)
 
 	// obtain integer and fractional parts of attack units for interpolation of shelter scale
 	w_mg_lo := int(w_mg_units); w_mg_frac := w_mg_units - f32(w_mg_lo)
 	w_eg_lo := int(w_eg_units); w_eg_frac := w_eg_units - f32(w_eg_lo)
 	b_mg_lo := int(b_mg_units); b_mg_frac := b_mg_units - f32(b_mg_lo)
 	b_eg_lo := int(b_eg_units); b_eg_frac := b_eg_units - f32(b_eg_lo)
+	w_mg_hi := min(w_mg_lo+1, int(shelter_len))
+	w_eg_hi := min(w_eg_lo+1, int(shelter_len))
+	b_mg_hi := min(b_mg_lo+1, int(shelter_len))
+	b_eg_hi := min(b_eg_lo+1, int(shelter_len))
 
 	// White's shelter scale uses Black's attack units; Black's shelter scale uses White's attack units
 	w_scale_mg := ((1-b_mg_frac)*shield_scale(b_mg_lo, scale_params, .MG) +
-		b_mg_frac*shield_scale(b_mg_lo+1, scale_params, .MG)) / f32(TAPER_SCALE)
+		b_mg_frac*shield_scale(b_mg_hi, scale_params, .MG)) / f32(TAPER_SCALE)
 	w_scale_eg := ((1-b_eg_frac)*shield_scale(b_eg_lo, scale_params, .EG) + 
-		b_eg_frac*shield_scale(b_eg_lo+1, scale_params, .EG)) / f32(TAPER_SCALE)
+		b_eg_frac*shield_scale(b_eg_hi, scale_params, .EG)) / f32(TAPER_SCALE)
 	b_scale_mg := ((1-w_mg_frac)*shield_scale(w_mg_lo, scale_params, .MG) + 
-		w_mg_frac*shield_scale(w_mg_lo+1, scale_params, .MG)) / f32(TAPER_SCALE)
+		w_mg_frac*shield_scale(w_mg_hi, scale_params, .MG)) / f32(TAPER_SCALE)
 	b_scale_eg := ((1-w_eg_frac)*shield_scale(w_eg_lo, scale_params, .EG) + 
-		w_eg_frac*shield_scale(w_eg_lo+1, scale_params, .EG)) / f32(TAPER_SCALE)
+		w_eg_frac*shield_scale(w_eg_hi, scale_params, .EG)) / f32(TAPER_SCALE)
 
 	// add delta to shelter scores
 	w_safety[.MG] = f32(score_mg(entry.safety[.White])) + mg[.Safety][.White]
@@ -596,10 +686,10 @@ linear_evaluation :: proc(
 	safety_eg := w_safety[.EG]*w_scale_eg - b_safety[.EG]*b_scale_eg
 
 	// interpolate attack strength with separate mg/eg indices
-	attack_mg := (1-w_mg_frac)*attack_strength(w_mg_lo, str_params, .MG) + w_mg_frac*attack_strength(w_mg_lo+1, str_params, .MG)
-	attack_mg -= (1-b_mg_frac)*attack_strength(b_mg_lo, str_params, .MG) + b_mg_frac*attack_strength(b_mg_lo+1, str_params, .MG)
-	attack_eg := (1-w_eg_frac)*attack_strength(w_eg_lo, str_params, .EG) + w_eg_frac*attack_strength(w_eg_lo+1, str_params, .EG)
-	attack_eg -= (1-b_eg_frac)*attack_strength(b_eg_lo, str_params, .EG) + b_eg_frac*attack_strength(b_eg_lo+1, str_params, .EG)
+	attack_mg := (1-w_mg_frac)*attack_strength(w_mg_lo, str_params, .MG) + w_mg_frac*attack_strength(w_mg_hi, str_params, .MG)
+	attack_mg -= (1-b_mg_frac)*attack_strength(b_mg_lo, str_params, .MG) + b_mg_frac*attack_strength(b_mg_hi, str_params, .MG)
+	attack_eg := (1-w_eg_frac)*attack_strength(w_eg_lo, str_params, .EG) + w_eg_frac*attack_strength(w_eg_hi, str_params, .EG)
+	attack_eg -= (1-b_eg_frac)*attack_strength(b_eg_lo, str_params, .EG) + b_eg_frac*attack_strength(b_eg_hi, str_params, .EG)
 
 	midgame = normal_mg + safety_mg + attack_mg
 	endgame = normal_eg + safety_eg + attack_eg
@@ -703,19 +793,24 @@ update_single_gradient :: proc(
 	w_eg_lo := int(data.units[.White][.EG]); w_eg_frac := data.units[.White][.EG] - f32(w_eg_lo)
 	b_mg_lo := int(data.units[.Black][.MG]); b_mg_frac := data.units[.Black][.MG] - f32(b_mg_lo)
 	b_eg_lo := int(data.units[.Black][.EG]); b_eg_frac := data.units[.Black][.EG] - f32(b_eg_lo)
+	shelter_len := len(SHELTER_SCALE)-1
+	w_mg_hi := min(w_mg_lo+1, shelter_len)
+	w_eg_hi := min(w_eg_lo+1, shelter_len)
+	b_mg_hi := min(b_mg_lo+1, shelter_len)
+	b_eg_hi := min(b_eg_lo+1, shelter_len)
 
 	// Attack strength finite differences (chain rule through table index)
-	str_diff_w_mg := attack_strength(w_mg_lo+1, str_params, .MG) - attack_strength(w_mg_lo, str_params, .MG)
-	str_diff_b_mg := attack_strength(b_mg_lo+1, str_params, .MG) - attack_strength(b_mg_lo, str_params, .MG)
-	str_diff_w_eg := attack_strength(w_eg_lo+1, str_params, .EG) - attack_strength(w_eg_lo, str_params, .EG)
-	str_diff_b_eg := attack_strength(b_eg_lo+1, str_params, .EG) - attack_strength(b_eg_lo, str_params, .EG)
+	str_diff_w_mg := attack_strength(w_mg_hi, str_params, .MG) - attack_strength(w_mg_lo, str_params, .MG)
+	str_diff_b_mg := attack_strength(b_mg_hi, str_params, .MG) - attack_strength(b_mg_lo, str_params, .MG)
+	str_diff_w_eg := attack_strength(w_eg_hi, str_params, .EG) - attack_strength(w_eg_lo, str_params, .EG)
+	str_diff_b_eg := attack_strength(b_eg_hi, str_params, .EG) - attack_strength(b_eg_lo, str_params, .EG)
 
 	// Shelter scale slopes at each index, per phase
 	// "at_w" = slope at the White attack index; "at_b" = slope at the Black attack index
-	scl_mg_at_w := (shield_scale(w_mg_lo+1, scale_params, .MG) - shield_scale(w_mg_lo, scale_params, .MG)) / f32(TAPER_SCALE)
-	scl_mg_at_b := (shield_scale(b_mg_lo+1, scale_params, .MG) - shield_scale(b_mg_lo, scale_params, .MG)) / f32(TAPER_SCALE)
-	scl_eg_at_w := (shield_scale(w_eg_lo+1, scale_params, .EG) - shield_scale(w_eg_lo, scale_params, .EG)) / f32(TAPER_SCALE)
-	scl_eg_at_b := (shield_scale(b_eg_lo+1, scale_params, .EG) - shield_scale(b_eg_lo, scale_params, .EG)) / f32(TAPER_SCALE)
+	scl_mg_at_w := (shield_scale(w_mg_hi, scale_params, .MG) - shield_scale(w_mg_lo, scale_params, .MG)) / f32(TAPER_SCALE)
+	scl_mg_at_b := (shield_scale(b_mg_hi, scale_params, .MG) - shield_scale(b_mg_lo, scale_params, .MG)) / f32(TAPER_SCALE)
+	scl_eg_at_w := (shield_scale(w_eg_hi, scale_params, .EG) - shield_scale(w_eg_lo, scale_params, .EG)) / f32(TAPER_SCALE)
+	scl_eg_at_b := (shield_scale(b_eg_hi, scale_params, .EG) - shield_scale(b_eg_lo, scale_params, .EG)) / f32(TAPER_SCALE)
 
 	w_safety_mg := data.safety[.White][.MG]
 	b_safety_mg := data.safety[.Black][.MG]
@@ -723,10 +818,10 @@ update_single_gradient :: proc(
 	b_safety_eg := data.safety[.Black][.EG]
 
 	// Precompute scales for the shelter weight gradient
-	w_scale_mg := ((1-b_mg_frac)*shield_scale(b_mg_lo, scale_params, .MG) + b_mg_frac*shield_scale(b_mg_lo+1, scale_params, .MG)) / f32(TAPER_SCALE)
-	b_scale_mg := ((1-w_mg_frac)*shield_scale(w_mg_lo, scale_params, .MG) + w_mg_frac*shield_scale(w_mg_lo+1, scale_params, .MG)) / f32(TAPER_SCALE)
-	w_scale_eg := ((1-b_eg_frac)*shield_scale(b_eg_lo, scale_params, .EG) + b_eg_frac*shield_scale(b_eg_lo+1, scale_params, .EG)) / f32(TAPER_SCALE)
-	b_scale_eg := ((1-w_eg_frac)*shield_scale(w_eg_lo, scale_params, .EG) + w_eg_frac*shield_scale(w_eg_lo+1, scale_params, .EG)) / f32(TAPER_SCALE)
+	w_scale_mg := ((1-b_mg_frac)*shield_scale(b_mg_lo, scale_params, .MG) + b_mg_frac*shield_scale(b_mg_hi, scale_params, .MG)) / f32(TAPER_SCALE)
+	b_scale_mg := ((1-w_mg_frac)*shield_scale(w_mg_lo, scale_params, .MG) + w_mg_frac*shield_scale(w_mg_hi, scale_params, .MG)) / f32(TAPER_SCALE)
+	w_scale_eg := ((1-b_eg_frac)*shield_scale(b_eg_lo, scale_params, .EG) + b_eg_frac*shield_scale(b_eg_hi, scale_params, .EG)) / f32(TAPER_SCALE)
+	b_scale_eg := ((1-w_eg_frac)*shield_scale(w_eg_lo, scale_params, .EG) + w_eg_frac*shield_scale(w_eg_hi, scale_params, .EG)) / f32(TAPER_SCALE)
 
 	for n in 0..<entry.n_tuples {
 		i := entry.tuples[n].idx
@@ -754,25 +849,25 @@ update_single_gradient :: proc(
 
 	// ATTACK_STRENGTH gradient
 	str_grad[w_mg_lo  ][.MG] += mg_base * (1-w_mg_frac)
-	str_grad[w_mg_lo+1][.MG] += mg_base * w_mg_frac
+	str_grad[w_mg_hi  ][.MG] += mg_base * w_mg_frac
 	str_grad[b_mg_lo  ][.MG] -= mg_base * (1-b_mg_frac)
-	str_grad[b_mg_lo+1][.MG] -= mg_base * b_mg_frac
+	str_grad[b_mg_hi  ][.MG] -= mg_base * b_mg_frac
 	str_grad[w_eg_lo  ][.EG] += eg_base * (1-w_eg_frac)
-	str_grad[w_eg_lo+1][.EG] += eg_base * w_eg_frac
+	str_grad[w_eg_hi  ][.EG] += eg_base * w_eg_frac
 	str_grad[b_eg_lo  ][.EG] -= eg_base * (1-b_eg_frac)
-	str_grad[b_eg_lo+1][.EG] -= eg_base * b_eg_frac
+	str_grad[b_eg_hi  ][.EG] -= eg_base * b_eg_frac
 
 	// SHELTER_SCALE gradient
 	// MG: White's shelter MG scale (depends on b_mg_lo); Black's (depends on w_mg_lo)
 	scl_grad[b_mg_lo  ][.MG] += mg_base * w_safety_mg * (1-b_mg_frac) / f32(TAPER_SCALE)
-	scl_grad[b_mg_lo+1][.MG] += mg_base * w_safety_mg * b_mg_frac     / f32(TAPER_SCALE)
+	scl_grad[b_mg_hi  ][.MG] += mg_base * w_safety_mg * b_mg_frac     / f32(TAPER_SCALE)
 	scl_grad[w_mg_lo  ][.MG] -= mg_base * b_safety_mg * (1-w_mg_frac) / f32(TAPER_SCALE)
-	scl_grad[w_mg_lo+1][.MG] -= mg_base * b_safety_mg * w_mg_frac     / f32(TAPER_SCALE)
+	scl_grad[w_mg_hi  ][.MG] -= mg_base * b_safety_mg * w_mg_frac     / f32(TAPER_SCALE)
 	// EG: White's shelter EG scale (depends on b_eg_lo); Black's (depends on w_eg_lo)
 	scl_grad[b_eg_lo  ][.EG] += eg_base * w_safety_eg * (1-b_eg_frac) / f32(TAPER_SCALE)
-	scl_grad[b_eg_lo+1][.EG] += eg_base * w_safety_eg * b_eg_frac     / f32(TAPER_SCALE)
+	scl_grad[b_eg_hi  ][.EG] += eg_base * w_safety_eg * b_eg_frac     / f32(TAPER_SCALE)
 	scl_grad[w_eg_lo  ][.EG] -= eg_base * b_safety_eg * (1-w_eg_frac) / f32(TAPER_SCALE)
-	scl_grad[w_eg_lo+1][.EG] -= eg_base * b_safety_eg * w_eg_frac     / f32(TAPER_SCALE)
+	scl_grad[w_eg_hi  ][.EG] -= eg_base * b_safety_eg * w_eg_frac     / f32(TAPER_SCALE)
 }
 
 tuned_evaluation_errors :: proc(
@@ -816,6 +911,124 @@ tuned_evaluation_errors :: proc(
 	}
 
 	return total / f32(n)
+}
+
+when TUNING {
+@(test)
+tuner_trace_equivalence :: proc(t: ^testing.T) {
+	types := build_eval_types()
+	base_params := make([][Phase]f32, N_EVAL_TERMS)
+	params := make([][Phase]f32, N_EVAL_TERMS)
+	str_params := make([][Phase]f32, len(ATTACK_STRENGTH))
+	scale_params := make([][Phase]f32, len(SHELTER_SCALE))
+	defer delete(base_params)
+	defer delete(params)
+	defer delete(str_params)
+	defer delete(scale_params)
+
+	init_base_params(base_params)
+
+	expect_score :: proc(
+		t: ^testing.T,
+		name: string,
+		got: [Phase]f32,
+		want: Score,
+		fen: string,
+	) -> bool {
+		got_mg := int(math.round(f64(got[.MG])))
+		got_eg := int(math.round(f64(got[.EG])))
+		want_mg := int(score_mg(want))
+		want_eg := int(score_eg(want))
+
+		if got_mg == want_mg && got_eg == want_eg {
+			return true
+		}
+
+		return testing.expect(
+			t,
+			false,
+			fmt.tprintf(
+				"{} trace mismatch: got S({},{}) want S({},{}) for {}",
+				name,
+				got_mg,
+				got_eg,
+				want_mg,
+				want_eg,
+				fen,
+			),
+		)
+	}
+
+	for fen in BENCH_FENS {
+		position, ok := parse_fen(fen)
+		if !testing.expect(t, ok, fmt.tprintf("failed to parse FEN: {}", fen)) {
+			return
+		}
+
+		entry: TunerEntry
+		init_entry(&entry, &position, types)
+
+		normal: [Phase]f32
+		safety_by_colour: [Colour][Phase]f32
+		attack_by_colour: [Colour][Phase]f32
+		defer delete(entry.tuples)
+		defer delete(position.history)
+
+		for n in 0..<entry.n_tuples {
+			tuple := entry.tuples[n]
+			i := tuple.idx
+			cw := f32(tuple.w_coeff)
+			cb := f32(tuple.b_coeff)
+
+			switch types[i] {
+			case .Normal:
+				normal[.MG] += (cw - cb) * base_params[i][.MG]
+				normal[.EG] += (cw - cb) * base_params[i][.EG]
+			case .Safety:
+				safety_by_colour[.White][.MG] += cw * base_params[i][.MG]
+				safety_by_colour[.White][.EG] += cw * base_params[i][.EG]
+				safety_by_colour[.Black][.MG] += cb * base_params[i][.MG]
+				safety_by_colour[.Black][.EG] += cb * base_params[i][.EG]
+			case .Attack:
+				attack_by_colour[.White][.MG] += cw * base_params[i][.MG]
+				attack_by_colour[.White][.EG] += cw * base_params[i][.EG]
+				attack_by_colour[.Black][.MG] += cb * base_params[i][.MG]
+				attack_by_colour[.Black][.EG] += cb * base_params[i][.EG]
+			}
+		}
+
+		if !expect_score(t, "normal", normal, entry.normal, fen) do return
+		if !expect_score(t, "white safety", safety_by_colour[.White], entry.safety[.White], fen) do return
+		if !expect_score(t, "black safety", safety_by_colour[.Black], entry.safety[.Black], fen) do return
+		if !expect_score(t, "white attack", attack_by_colour[.White], entry.attack[.White], fen) do return
+		if !expect_score(t, "black attack", attack_by_colour[.Black], entry.attack[.Black], fen) do return
+
+		data: GradientData
+		reconstructed := linear_evaluation(
+			&entry,
+			params,
+			str_params,
+			scale_params,
+			types[:],
+			&data,
+		)
+		diff := abs(reconstructed - f32(entry.static_eval))
+		if !testing.expect(
+			t,
+			diff <= 3,
+			fmt.tprintf(
+				"zero-delta tuner eval mismatch: got {:.2f} want {} diff {:.2f} for {}",
+				reconstructed,
+				entry.static_eval,
+				diff,
+				fen,
+			),
+		) {
+			return
+		}
+
+	}
+}
 }
 
 

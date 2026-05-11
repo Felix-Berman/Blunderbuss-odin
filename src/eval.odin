@@ -120,6 +120,7 @@ evaluate :: proc(position: ^Position) -> int {
 
 	for us in Colour {
 		them := toggle(us)
+		occ_us := position.occupancy[us]
 		pawns_us := pieces[us][.Pawn]
 		pawns_them := pieces[them][.Pawn]
 		pawn_controlled := pawn_attacks(them, pawns_them)
@@ -153,12 +154,12 @@ evaluate :: proc(position: ^Position) -> int {
 					to_bb = pawn_attacks(us, bitboard(from))
 				case .Knight:
 					to_bb = KNIGHT_TABLE[from]
-					mobility := pop_count(to_bb)
+					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					scores[us] += KNIGHT_MOBILITY[mobility]
 					when TRACING do trace.coeffs.knight_mobility[mobility][us] += 1
 				case .Bishop:
 					to_bb = magic_bishop_moves(from, occ)
-					mobility := pop_count(to_bb)
+					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					scores[us] += BISHOP_MOBILITY[mobility]
 					when TRACING do trace.coeffs.bishop_mobility[mobility][us] += 1
 
@@ -172,7 +173,7 @@ evaluate :: proc(position: ^Position) -> int {
 					bishop_pair += {square_colour(from)}
 				case .Rook:
 					to_bb = magic_rook_moves(from, occ)
-					mobility := pop_count(to_bb)
+					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					scores[us] += ROOK_MOBILITY[mobility]
 					when TRACING do trace.coeffs.rook_mobility[mobility][us] += 1
 
@@ -195,7 +196,7 @@ evaluate :: proc(position: ^Position) -> int {
 					}
 				case .Queen:
 					to_bb = magic_queen_moves(from, occ)
-					mobility := pop_count(to_bb)
+					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					scores[us] += QUEEN_MOBILITY[mobility]
 					when TRACING do trace.coeffs.queen_mobility[mobility][us] += 1
 

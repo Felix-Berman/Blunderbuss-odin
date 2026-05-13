@@ -178,10 +178,19 @@ go :: proc(line: ^string, position: ^Position) -> bool {
 	}
 
 	if movetime != 0 {
-		data.allowed_time = time.Duration(movetime) * time.Millisecond
+		data.target_time = time.Duration(movetime) * time.Millisecond
+		data.allowed_time = data.target_time
 	} else if side_time != 0 {
-		data.allowed_time = time.Duration(side_time/movestogo + side_inc/2)
-		data.allowed_time *= time.Millisecond
+		reserve := clamp(side_time / 20, 50, 1000)	
+		available := max(1, side_time - reserve)
+		target := side_time / movestogo + side_inc / 2
+		target = min(target, available)
+
+		limit := target * 3 + side_inc
+		limit = clamp(limit, target, available)
+
+		data.target_time = time.Duration(target) * time.Millisecond
+		data.allowed_time = time.Duration(limit) * time.Millisecond
 	} else {
 		data.infinite = true
 	}

@@ -65,6 +65,7 @@ SearchData :: struct {
 	infinite: bool,
 	pondering: bool,
 	start_time: time.Tick,
+	target_time: time.Duration,
 	allowed_time: time.Duration,
 	pv_table: [MAX_DEPTH][MAX_DEPTH]Move,
 	pv_length: [MAX_DEPTH]int,
@@ -261,7 +262,11 @@ root_search :: proc(data: ^SearchData) -> int {
 
 				// threshold for stopping early decreases hyperbolically as
 				// allocated time runs out.
-				certainty_threshold := 1.3 * f64(data.allowed_time)/f64(elapsed)
+				target_time := data.target_time
+				if target_time == 0 {
+					target_time = data.allowed_time
+				}
+				certainty_threshold := 1.3 * f64(target_time)/f64(elapsed)
 
 				pv_stability := f64(depth - best_since_depth)
 
@@ -300,7 +305,12 @@ root_search :: proc(data: ^SearchData) -> int {
 					data.ebf = ebf
 				}
 
-				remaining_time := data.allowed_time - elapsed
+				target_time := data.target_time
+				if target_time == 0 {
+					target_time = data.allowed_time
+				}
+
+				remaining_time := target_time - elapsed
 				estimated_time := f64(prev_search_time) * data.ebf
 				if f64(remaining_time) < estimated_time {
 					break iterative_deepening

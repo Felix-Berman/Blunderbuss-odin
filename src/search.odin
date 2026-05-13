@@ -374,8 +374,13 @@ negamax :: proc(
 		}
 	}
 
-	data.pv_length[ply] = 0
 	data.nodes += 1
+
+	if ply >= MAX_DEPTH {
+		return evaluate(&data.position)
+	}
+
+	data.pv_length[ply] = 0
 
 	if data.position.halfmove_clk >= 100 || threefold_repetition(data, ply) {
 		return 0
@@ -387,10 +392,6 @@ negamax :: proc(
 	beta := min(beta, MATE_EVAL - ply)
 	mate_window := alpha <= -MATE_EVAL + ply || beta >= MATE_EVAL - ply
 	if alpha >= beta do return alpha
-
-	if ply == MAX_DEPTH {
-		return evaluate(&data.position)
-	}
 
 	if depth == 0 {
 		return q_search(alpha, beta, ply, data, prev_move)
@@ -630,6 +631,12 @@ q_search :: proc(
 
 	data.nodes += 1
 
+	if ply >= MAX_DEPTH {
+		return evaluate(&data.position)
+	}
+
+	data.pv_length[ply] = 0
+
 	if data.position.halfmove_clk >= 100 || fast_repetition(data) {
 		return 0
 	}
@@ -638,15 +645,9 @@ q_search :: proc(
 	beta  := min(beta,  MATE_EVAL - ply)
 	if alpha >= beta do return alpha
 
-	if ply >= MAX_DEPTH {
-		return evaluate(&data.position)
-	}
-
 	if ply > data.seldepth {
 		data.seldepth = ply
 	}
-
-	data.pv_length[ply] = 0
 
 	us := data.position.turn
 	them := toggle(us)
@@ -795,8 +796,13 @@ mate_search :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^Search
 		}
 	}
 
-	data.pv_length[ply] = 0
 	data.nodes += 1
+
+	if ply >= MAX_DEPTH {
+		return MIN_EVAL
+	}
+
+	data.pv_length[ply] = 0
 
 	if data.position.halfmove_clk >= 100 || threefold_repetition(data, ply) {
 		return 0
@@ -921,15 +927,20 @@ update_pv :: proc(ply: int, move: Move, data: ^SearchData) {
 	data.pv_table[ply][ply] = move
 
 	if ply >= MAX_DEPTH - 1 {
-		data.pv_length[ply] = 0
+		data.pv_length[ply] = 1
 		return
 	}
 
-	data.pv_length[ply] = data.pv_length[ply + 1] + 1
+	child_len := data.pv_length[ply + 1]
+	max_child_len := MAX_DEPTH - ply - 1
+	assert(child_len <= max_child_len, "PV child length exceeds table bounds")
+
+	child_len = min(child_len, max_child_len)
+	data.pv_length[ply] = child_len + 1
 	mem.copy_non_overlapping(
 		&data.pv_table[ply][ply + 1],
 		&data.pv_table[ply + 1][ply + 1],
-		data.pv_length[ply + 1] * size_of(Move)
+		child_len * size_of(Move)
 	)
 }
 

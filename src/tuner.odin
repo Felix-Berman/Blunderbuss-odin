@@ -299,6 +299,7 @@ enforce_parameter_constraints :: proc(params, c_params: [][Phase]f32) {
 	material_start := int(offset_of(Coeffs, material_count) / TERM_SIZE)
 	psqt_start := int(offset_of(Coeffs, piece_sq_tbls) / TERM_SIZE)
 	pawn_material_idx := material_start + int(PieceType.Pawn)
+	mobility_start := int(offset_of(Coeffs, knight_mobility) / TERM_SIZE)
 
 	// maintain centipawn relative eval
 	params[pawn_material_idx][.MG] = 0
@@ -308,24 +309,48 @@ enforce_parameter_constraints :: proc(params, c_params: [][Phase]f32) {
 		table_start := psqt_start + int(piece) * 64
 		material_idx := material_start + int(piece)
 
+		mobility_len := 0
+		#partial switch piece {
+			case .Knight: mobility_len = len(KNIGHT_MOBILITY)
+			case .Bishop: mobility_len = len(BISHOP_MOBILITY)
+			case .Rook:   mobility_len = len(ROOK_MOBILITY)
+			case .Queen:  mobility_len = len(QUEEN_MOBILITY)
+		}
+
 		for p in Phase {
-			mean: f32
-			for sq in 0..<64 {
-				idx := table_start + sq
-				mean += c_params[idx][p] + params[idx][p]
-			}
-			mean /= 64
+			psqt_mean, mobility_mean: f32
 
 			for sq in 0..<64 {
-				params[table_start + sq][p] -= mean
+				if piece == .Pawn && (sq < 8 || sq >= 56) do continue
+				idx := table_start + sq
+				psqt_mean += c_params[idx][p] + params[idx][p]
+			}
+			psqt_mean /= 64
+
+			for sq in 0..<64 {
+				if piece == .Pawn && (sq < 8 || sq >= 56) do continue
+				params[table_start + sq][p] -= psqt_mean
+			}
+
+			for i in 0..<mobility_len {
+				idx := mobility_start + i
+				mobility_mean += c_params[idx][p] + params[idx][p]
+			}
+			mobility_mean /= f32(mobility_len)
+
+			for i in 0..<mobility_len {
+				idx := mobility_start + i
+				params[idx][p] -= mobility_mean
 			}
 
 			// Keep non-pawn material values equal to the average piece value.
 			// Pawn material is the fixed centipawn anchor; king material cancels.
 			if piece != .Pawn && piece != .King {
-				params[material_idx][p] += mean
+				params[material_idx][p] += psqt_mean + mobility_mean
 			}
 		}
+
+		mobility_start += mobility_len
 	}
 
 	params[pawn_material_idx][.MG] = 0

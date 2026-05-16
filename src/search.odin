@@ -482,7 +482,7 @@ negamax :: proc(
 	}
 
 	// check extension
-	if in_check && depth < MAX_DEPTH {
+	if in_check && depth < MAX_DEPTH - 1 {
 		depth += 1
 	}
 

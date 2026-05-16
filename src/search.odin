@@ -129,8 +129,9 @@ root_search :: proc(data: ^SearchData) -> int {
 	prev_eval: int
 
 	ply := 0
+	max_depth := clamp(data.max_depth, 1, MAX_DEPTH - 1)
 	iterative_deepening:
-	for depth in 1..=data.max_depth {
+	for depth in 1..=max_depth {
 		depth_timer := time.tick_now()
 		// if found_mate do break
 

@@ -392,7 +392,9 @@ negamax :: proc(
 
 	data.pv_length[ply] = 0
 
-	if data.position.halfmove_clk >= 100 || threefold_repetition(data, ply) {
+	history_repetition := false
+	if data.position.halfmove_clk >= 100 ||
+		threefold_repetition(data, ply, &history_repetition) {
 		return 0
 	}
 
@@ -406,6 +408,8 @@ negamax :: proc(
 	if depth == 0 {
 		return q_search(alpha, beta, ply, data, prev_move)
 	}
+
+	tt_score_valid := !history_repetition
 
 	depth := depth
 	best_eval := MIN_EVAL
@@ -426,7 +430,7 @@ negamax :: proc(
 	if tt_entry.hash == zob_hash {
 		best_move = tt_entry.move
 
-		if tt_entry.depth >= depth {
+		if tt_score_valid && tt_entry.depth >= depth {
 			tt_eval := eval_from_tt(tt_entry.eval, ply)
 
 			switch tt_entry.eval_type {
@@ -468,13 +472,15 @@ negamax :: proc(
 				unmake_null_move(&data.position)
 
 				if eval >= beta {
-					ttable_insert(&t_table, TTableEntry{
-						data.position.hash,
-						null_depth,
-						eval_to_tt(eval, ply),
-						.LowerBound,
-						NULL_MOVE,
-					})
+					if tt_score_valid {
+						ttable_insert(&t_table, TTableEntry{
+							data.position.hash,
+							null_depth,
+							eval_to_tt(eval, ply),
+							.LowerBound,
+							NULL_MOVE,
+						})
+					}
 					return eval
 				}
 			}
@@ -598,13 +604,15 @@ negamax :: proc(
 		return 0
 	}
 
-	ttable_insert(&t_table, TTableEntry{
-		data.position.hash,
-		tt_depth,
-		eval_to_tt(best_eval, ply),
-		eval_type,
-		best_move,
-	})
+	if tt_score_valid {
+		ttable_insert(&t_table, TTableEntry{
+			data.position.hash,
+			tt_depth,
+			eval_to_tt(best_eval, ply),
+			eval_type,
+			best_move,
+		})
+	}
 
 	return best_eval
 }
@@ -814,7 +822,9 @@ mate_search :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^Search
 
 	data.pv_length[ply] = 0
 
-	if data.position.halfmove_clk >= 100 || threefold_repetition(data, ply) {
+	history_repetition := false
+	if data.position.halfmove_clk >= 100 ||
+		threefold_repetition(data, ply, &history_repetition) {
 		return 0
 	}
 
@@ -828,6 +838,8 @@ mate_search :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^Search
 	if depth == 0 {
 		return MIN_EVAL
 	}
+
+	tt_score_valid := !history_repetition
 
 	best_eval := MIN_EVAL
 	best_move := NULL_MOVE
@@ -843,7 +855,7 @@ mate_search :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^Search
 	if tt_entry.hash == zob_hash {
 		best_move = tt_entry.move
 
-		if tt_entry.depth >= depth {
+		if tt_score_valid && tt_entry.depth >= depth {
 			tt_eval := eval_from_tt(tt_entry.eval, ply)
 
 			switch tt_entry.eval_type {
@@ -921,13 +933,15 @@ mate_search :: proc(alpha, beta, depth, ply: int, prev_move: Move, data: ^Search
 		return 0
 	}
 
-	ttable_insert(&t_table, TTableEntry{
-		data.position.hash,
-		tt_depth,
-		eval_to_tt(best_eval, ply),
-		eval_type,
-		best_move,
-	})
+	if tt_score_valid {
+		ttable_insert(&t_table, TTableEntry{
+			data.position.hash,
+			tt_depth,
+			eval_to_tt(best_eval, ply),
+			eval_type,
+			best_move,
+		})
+	}
 
 	return best_eval
 }
@@ -1052,7 +1066,15 @@ pick_move :: proc(movelist: []Move, scores: []int) -> Move {
 	return movelist[0]
 }
 
-threefold_repetition :: proc(data: ^SearchData, search_ply: int) -> bool {
+threefold_repetition :: proc(
+	data: ^SearchData,
+	search_ply: int,
+	repeated_in_game_history: ^bool = nil,
+) -> bool {
+	if repeated_in_game_history != nil {
+		repeated_in_game_history^ = false
+	}
+
 	ply_to_search := data.position.ply - data.position.last_irreversible_ply
 
 	if ply_to_search < 4 {
@@ -1060,12 +1082,20 @@ threefold_repetition :: proc(data: ^SearchData, search_ply: int) -> bool {
 	}
 
 	history_len := len(data.position.history)
+	// Entries before this point existed at the root; later ones occured during search
+	root_history_len := max(0, history_len - search_ply)
+
 	repetition_count: int
-	for i: int = 4; i <= ply_to_search; i += 2 {
-		if data.position.history[history_len - i].hash == data.position.hash {
+	for i: int = 4; i <= ply_to_search && i <= history_len; i += 2 {
+		idx := history_len - i
+		if data.position.history[idx].hash == data.position.hash {
+			if repeated_in_game_history != nil && search_ply <= 2 &&
+				idx < root_history_len {
+				repeated_in_game_history^ = true
+			}
 			if search_ply > 2 do return true
 			repetition_count += 1
-			if repetition_count == 2 do return true	
+			if repetition_count >= 2 do return true	
 		}
 	}
 

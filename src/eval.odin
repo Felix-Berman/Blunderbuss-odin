@@ -3,6 +3,7 @@ package blunderbuss
 import "core:math"
 import "core:testing"
 import "core:log"
+import "base:intrinsics"
 
 TRACING :: #config(TRACING, false) || #config(TUNING, false)
 
@@ -27,22 +28,11 @@ Coeffs :: struct #packed {
 	bishop_mobility: [len(BISHOP_MOBILITY)][Colour]int,
 	rook_mobility: [len(ROOK_MOBILITY)][Colour]int,
 	queen_mobility: [len(QUEEN_MOBILITY)][Colour]int,
-	// safety
-	// pawn_shield: [2][6][8][Colour]int,
-	// pawn_storm: [2][6][8][Colour]int,
-	// shield_gap: [2][2][Colour]int,
-	// defenders_count: [12][Colour]int,
-	// attack
-	// attacker_counts: [PieceType][Colour]int,
-	// bishop_battery: [Colour]int,
-	// rook_battery: [Colour]int,
-	// queen_battery: [Colour]int,
+	king_shelter: [9][Colour]int,
 }
 
 Trace :: struct {
 	coeffs: Coeffs,
-	// safety: [Colour]Score, // pre nonlinear score
-	// attack: [Colour]Score, // pre nonlinear score
 	normal: Score,
 	turn: Colour
 }
@@ -127,7 +117,7 @@ evaluate :: proc(position: ^Position) -> int {
 		bishop_pair: bit_set[Colour]
 
 		king_them := lsb(pieces[them][.King])
-		king_zone := get_king_zone(them, king_them)
+		king_zone := king_zone(them, king_them)
 
 		for bb, piece in pieces[us] {
 			from_bb := bb
@@ -163,26 +153,12 @@ evaluate :: proc(position: ^Position) -> int {
 					scores[us] += BISHOP_MOBILITY[mobility]
 					when TRACING do trace.coeffs.bishop_mobility[mobility][us] += 1
 
-					// x_occ := occ &~ (pieces[us][.Bishop] | pieces[us][.Queen])
-					// x_ray := magic_bishop_moves(from, x_occ)
-					// if to_bb & king_zone == 0 && x_ray & king_zone != 0 {
-					// 	attack_units[us] += BISHOP_BATTERY_UNITS
-					// 	when TRACING do trace.coeffs.bishop_battery[us] += 1
-					// }
-
 					bishop_pair += {square_colour(from)}
 				case .Rook:
 					to_bb = magic_rook_moves(from, occ)
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					scores[us] += ROOK_MOBILITY[mobility]
 					when TRACING do trace.coeffs.rook_mobility[mobility][us] += 1
-
-					// x_occ := occ &~ (pieces[us][.Rook] | pieces[us][.Queen])
-					// x_ray := magic_rook_moves(from, x_occ)
-					// if to_bb & king_zone == 0 && x_ray & king_zone != 0 {
-					// 	attack_units[us] += ROOK_BATTERY_UNITS
-					// 	when TRACING do trace.coeffs.rook_battery[us] += 1
-					// }
 
 					file := SQ_MASKS[from].file
 					if pawns_us & file == 0 {
@@ -200,21 +176,9 @@ evaluate :: proc(position: ^Position) -> int {
 					scores[us] += QUEEN_MOBILITY[mobility]
 					when TRACING do trace.coeffs.queen_mobility[mobility][us] += 1
 
-					// x_occ := occ &~ (pieces[us][.Bishop] | pieces[us][.Rook] | 
-					// 	pieces[us][.Queen])
-					// x_ray := magic_queen_moves(from, x_occ)
-					// if to_bb & king_zone == 0 && x_ray & king_zone != 0 {
-					// 	attack_units[us] += QUEEN_BATTERY_UNITS
-					// 	when TRACING do trace.coeffs.queen_battery[us] += 1
-					// }
 				case .King:
 					to_bb = KING_TABLE[from]
 				}
-
-				// if to_bb & king_zone != 0 {
-				// 	attack_units[us] += ATTACK_UNITS[piece]
-				// 	when TRACING do trace.coeffs.attacker_counts[piece][us] += 1
-				// }
 			}
 		}
 
@@ -224,32 +188,13 @@ evaluate :: proc(position: ^Position) -> int {
 			when TRACING do trace.coeffs.bishop_pair[us] = 1
 		}
 
-		scores[us] += eval_pawn_structure(position, us)
+		scores[us] += pawn_structure(position, us)
+		scores[us] += king_shelter(position, us)
 	}
 
 	scores[us] += TEMPO_BONUS
 
 	when TRACING do trace.normal = scores[.White] - scores[.Black]
-
-	// king safety
-	// for us in Colour {
-	// 	them := toggle(us)
-	// 	units_mg := clamp(int(score_mg(attack_units[them])), 0, 39)
-	// 	units_eg := clamp(int(score_eg(attack_units[them])), 0, 39)
-
-	// 	shelter := eval_king_shelter(position, us)
-
-	// 	when TRACING {
-	// 		trace.safety[us] = shelter
-	// 		trace.attack[them] = attack_units[them]
-	// 	}
-
-	// 	shelter = S(
-	// 		i16(int(score_mg(shelter)) * int(score_mg(SHELTER_SCALE[units_mg])) / TAPER_SCALE),
-	// 		i16(int(score_eg(shelter)) * int(score_eg(SHELTER_SCALE[units_eg])) / TAPER_SCALE),
-	// 	)
-	// 	scores[us] += shelter - S(score_mg(ATTACK_STRENGTH[units_mg]), score_eg(ATTACK_STRENGTH[units_eg]))
-	// }
 
 	phase = clamp(phase, 0, 24)
 	phase = (TAPER_SCALE * phase + 12) / 24
@@ -260,67 +205,42 @@ evaluate :: proc(position: ^Position) -> int {
 	return (mg_eval * phase + eg_eval * (TAPER_SCALE - phase)) / TAPER_SCALE
 }
 
-get_king_zone :: proc(side: Colour, king_sq: int) -> u64 {
+king_zone :: proc(side: Colour, king_sq: int) -> u64 {
 	zone := KING_TABLE[king_sq]
 	zone |= zone << 8 if side == .White else zone >> 8
 	return zone
 }
 
-// eval_king_shelter :: proc(position: ^Position, us: Colour) -> (score: Score) {
-// 	them := toggle(us)
-// 	pieces := position.pieces
-// 	king_sq := lsb(pieces[us][.King])
-// 	king_rank := king_sq / 8
-// 	king_file := king_sq % 8
-// 	king_zone := get_king_zone(us, king_sq)
+king_shelter :: proc(position: ^Position, us: Colour) -> (score: Score) {
+	king_us := position.pieces[us][.King]
+	king_sq := lsb(king_us)
+	king_rank := king_sq / 8
+	king_file := king_sq % 8
 
-// 	pawns_us := position.pieces[us][.Pawn]
-// 	pawns_them := position.pieces[them][.Pawn]
+	shelter_mask := ranks_ahead(us, king_rank)
+	pawns_us := position.pieces[us][.Pawn] & shelter_mask
 
-// 	// calculate pawn shield and storm
-// 	for file in max(king_file - 1, 0)..=min(king_file + 1, 7) {
-// 		pawn_bb_us := pawns_us & FILES[file] & ranks_ahead(us, king_rank)
-// 		pawn_bb_them := pawns_them & FILES[file] & ranks_ahead(us, king_rank)
-// 		on_king_file := int(file == king_file)
+	for offset in -1..=1 {
+		file := clamp(king_file, 1, 6) + offset
+		file_bb := H_FILE << uint(file)
+		
+		pawns_file := pawns_us & file_bb
+		// colour relative rank (open file when pawn_distance == 8)
+		pawn_distance: int
+		if us == .White {
+			pawn_distance = lsb(pawns_file) / 8
+		} else {
+			pawn_distance = int(intrinsics.count_leading_zeros(pawns_file) / 8)
+		}
 
-// 		if pawn_bb_us != 0 {
-// 			us_sq := lsb(pawn_bb_us) if us == .White else msb(pawn_bb_us)
-// 			rank_us := us_sq / 8 if us == .Black else 7 - (us_sq / 8)
-// 			score += PAWN_SHIELD[on_king_file][rank_us - 1][file]
-// 			when TRACING {
-// 				trace.coeffs.pawn_shield[on_king_file][rank_us-1][file][us] = 1
-// 			}
-// 		} else if pawn_bb_them != 0 {
-// 			score += SHIELD_GAP[on_king_file][0] //semi open
-// 			when TRACING {
-// 				trace.coeffs.shield_gap[on_king_file][0][us] += 1
-// 			}
-// 		} else {
-// 			score += SHIELD_GAP[on_king_file][1] // open
-// 			when TRACING {
-// 				trace.coeffs.shield_gap[on_king_file][1][us] += 1
-// 			}
-// 		}
+		score += KING_SHELTER[pawn_distance]
+		when TRACING do trace.coeffs.king_shelter[pawn_distance][us] += 1
+	}
 
-// 		if pawn_bb_them != 0 {
-// 			them_sq := lsb(pawn_bb_them) if us == .White else msb(pawn_bb_them)
-// 			rank_them := them_sq / 8 if them == .Black else (7 - them_sq / 8)
-// 			score += PAWN_STORM[int(file == king_file)][rank_them - 1][file]
-// 			when TRACING {
-// 				trace.coeffs.pawn_storm[on_king_file][rank_them-1][file][us] = 1
-// 			}
-// 		}
-// 	}
+	return
+}
 
-// 	defenders := pieces[us][.Pawn] | pieces[us][.Knight] | pieces[us][.Bishop]
-// 	defender_count := pop_count(defenders & king_zone)
-// 	score += DEFENDERS[defender_count]
-// 	when TRACING do trace.coeffs.defenders_count[defender_count][us] = 1
-
-// 	return
-// }
-
-eval_pawn_structure :: proc(position: ^Position, us: Colour) -> (score: Score) {
+pawn_structure :: proc(position: ^Position, us: Colour) -> (score: Score) {
 	them := toggle(us)
 	pawns_us := position.pieces[us][.Pawn]
 	pawns_them := position.pieces[them][.Pawn]
@@ -493,7 +413,6 @@ score_accumulation :: proc(t: ^testing.T) {
 	testing.expect_value(t, score_eg(acc), i16(ref_eg))
 }
 
-// Verifies that the evaluation function is symmetric with respect to colour by mirroring the position
 when !TUNING {
 @(test)
 mirror_eval :: proc(t: ^testing.T) {

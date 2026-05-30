@@ -66,7 +66,7 @@ def main():
         "-games", "2", # Play pairs (white/black)
         "-concurrency", "8",
         "-openings", f"file={OPENING_BOOK}", "format=pgn", "order=random",
-        # "-resign", "movecount=3", "score=400", # Resign if mate is inevitable
+        "-resign", "movecount=3", "score=600",
         "-draw", "movenumber=40", "movecount=8", "score=10", # Draw adjudication
         "-recover", # Restart engine on crash
         "-pgnout", f"file={pgn_file}", "notation=lan",

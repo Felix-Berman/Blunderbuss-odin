@@ -4,6 +4,7 @@ import "core:os"
 import "core:strings"
 import "core:math"
 import "core:fmt"
+import "core:reflect"
 import "core:thread"
 import "core:math/rand"
 import "core:time"
@@ -12,9 +13,9 @@ import "core:testing"
 
 TUNING :: #config(TUNING, false)
 
+EVAL_WEIGHTS_PATH :: "src/eval_weights.odin"
 TUNING_DATASET :: "training_sets/quiet-labeled.epd"
-TERM_SIZE :: size_of([Colour]int)
-N_EVAL_TERMS :: size_of(Coeffs) / TERM_SIZE
+
 N_THREADS :: 8
 K_PRECISION :: 10
 BATCH_SIZE :: 16384
@@ -25,18 +26,15 @@ LR_STEP_RATE :: 250
 LR_DROP_RATE :: 1.1
 REPORTING_RATE :: 20
 
-TunerTuple :: struct { idx, w_coeff, b_coeff: int }
+TunerTuple :: struct { idx, coeff: int }
 
 TunerEntry :: struct {
 	static_eval: int,
-	phase: int,
-	turn: Colour,
 	normal: Score,
 	result: f32,
 	mg_factor: f32,
 	eg_factor: f32,
 	tuples: []TunerTuple,
-	n_tuples: int,
 }
 
 WorkerData :: struct {
@@ -47,6 +45,12 @@ WorkerData :: struct {
 	error: f32,
 }
 
+delete_entries :: proc(entries: []TunerEntry) {
+	for &entry in entries {
+		delete(entry.tuples)
+	}
+}
+
 run_tuner :: proc() {
 	params := make([][Phase]f32, N_EVAL_TERMS); defer delete(params)
 	adagrad := make([][Phase]f32, N_EVAL_TERMS); defer delete(adagrad)
@@ -55,11 +59,13 @@ run_tuner :: proc() {
 	error: f32
 	rate: f32 = LR_RATE
 
-	entries := init_entries()[:]
+	entries_dyn := init_entries()
+	defer delete_entries(entries_dyn[:])
+	defer delete(entries_dyn)
+	entries := entries_dyn[:]
 	K := compute_optimal_K(&entries)
 
-	n_batches := len(entries) / BATCH_SIZE
-	batch_size_f := f32(BATCH_SIZE)
+	n_batches := (len(entries) + BATCH_SIZE - 1) / BATCH_SIZE
 
 	now := time.now()
 	utc_offset := 10 * 60 * 60 // default to AEST
@@ -69,10 +75,8 @@ run_tuner :: proc() {
 	local_now := time.time_add(now, time.Duration(utc_offset) * time.Second)
 
 	date_buf: [time.MIN_YYYY_DATE_LEN]u8
-	hms_buf: [time.MIN_HMS_LEN]u8
 	date := time.to_string_yyyy_mm_dd(local_now, date_buf[:])
-	// hms := time.to_string_hms(local_now, hms_buf[:])
-	hour, minute, sec := time.clock(local_now)
+	hour, minute, _ := time.clock(local_now)
 	timestamp := fmt.tprintf("{}_{}-{}", date, hour, minute)
 	os.make_directory("tuner_log")
 	log_path	 := fmt.tprintf("tuner_log/{}_tuner.log", timestamp)
@@ -80,14 +84,10 @@ run_tuner :: proc() {
 
 	log_file, log_err := os.create(log_path)
 	if log_err != nil {
-		fmt.eprintfln("Failed ot create log file {}: {}", log_path, log_err)
+		fmt.eprintfln("Failed to create log file {}: {}", log_path, log_err)
 		return
 	}
-	weights_file, weights_err := os.create(weights_path)
-	if weights_err != nil {
-		fmt.eprintfln("Failed ot create weights file {}: {}", weights_path, weights_err)
-		return
-	}
+	defer os.close(log_file)
 
 	header := fmt.tprintfln(
 		"K={:.4f}  positions={}  batch_size={}	n_batches={}  epochs={}",
@@ -110,14 +110,15 @@ run_tuner :: proc() {
 			batch_start := batch * BATCH_SIZE
 			batch_end := min(batch_start + BATCH_SIZE, len(entries))
 			compute_gradient(entries[batch_start:batch_end], &gradient, params, K)
+			batch_size_f := f32(batch_end - batch_start)
 
 			for i in 0..<N_EVAL_TERMS {
 				adagrad[i][.MG] += math.pow((K / 200) * gradient[i][.MG] / batch_size_f, 2)
 				adagrad[i][.EG] += math.pow((K / 200) * gradient[i][.EG] / batch_size_f, 2)
 
-				params[i][.MG] += (K / 200) * (gradient[i][.MG]  / BATCH_SIZE) *
+				params[i][.MG] += (K / 200) * (gradient[i][.MG] / batch_size_f) *
 					(rate / math.sqrt(1e-8 + adagrad[i][.MG]))
-				params[i][.EG] += (K / 200) * (gradient[i][.EG]  / BATCH_SIZE) *
+				params[i][.EG] += (K / 200) * (gradient[i][.EG] / batch_size_f) *
 					(rate / math.sqrt(1e-8 + adagrad[i][.EG]))
 			}
 
@@ -151,6 +152,7 @@ run_tuner :: proc() {
 
 	enforce_parameter_constraints(params, c_params)
 	print_params(params, c_params, weights_path, timestamp)
+	print_params(params, c_params, EVAL_WEIGHTS_PATH, timestamp)
 }
 
 gradient_worker :: proc(t: ^thread.Thread) {
@@ -192,7 +194,7 @@ static_error_worker :: proc(t: ^thread.Thread) {
 }
 
 enforce_parameter_constraints :: proc(params, c_params: [][Phase]f32) {
-	material_start := int(offset_of(Coeffs, material_count) / TERM_SIZE)
+	material_start := int(offset_of(Coeffs, material) / TERM_SIZE)
 	psqt_start := int(offset_of(Coeffs, piece_sq_tbls) / TERM_SIZE)
 	pawn_material_idx := material_start + int(PieceType.Pawn)
 	mobility_start := int(offset_of(Coeffs, knight_mobility) / TERM_SIZE)
@@ -207,10 +209,10 @@ enforce_parameter_constraints :: proc(params, c_params: [][Phase]f32) {
 
 		mobility_len := 0
 		#partial switch piece {
-			case .Knight: mobility_len = len(KNIGHT_MOBILITY)
-			case .Bishop: mobility_len = len(BISHOP_MOBILITY)
-			case .Rook:   mobility_len = len(ROOK_MOBILITY)
-			case .Queen:  mobility_len = len(QUEEN_MOBILITY)
+			case .Knight: mobility_len = KNIGHT_MOBILITY_COUNT
+			case .Bishop: mobility_len = BISHOP_MOBILITY_COUNT
+			case .Rook:   mobility_len = ROOK_MOBILITY_COUNT
+			case .Queen:  mobility_len = QUEEN_MOBILITY_COUNT
 		}
 
 		for p in Phase {
@@ -262,7 +264,7 @@ tuner_parameter_constraints :: proc(t: ^testing.T) {
 
 	init_base_params(c_params)
 
-	material_start := int(offset_of(Coeffs, material_count) / TERM_SIZE)
+	material_start := int(offset_of(Coeffs, material) / TERM_SIZE)
 	psqt_start := int(offset_of(Coeffs, piece_sq_tbls) / TERM_SIZE)
 	pawn_material_idx := material_start + int(PieceType.Pawn)
 
@@ -294,62 +296,12 @@ tuner_parameter_constraints :: proc(t: ^testing.T) {
 }
 
 init_base_params :: proc(c_params: [][Phase]f32) {
-	idx := 0
+	base := (cast(^[N_EVAL_TERMS]Score)&eval_weights)^
 
-	set :: proc(c: [][Phase]f32, idx: ^int, s: Score) {
-		c[idx^][.MG] = f32(score_mg(s))
-		c[idx^][.EG] = f32(score_eg(s))
-		idx^ += 1
+	for score, idx in base {
+		c_params[idx][.MG] = f32(score_mg(score))
+		c_params[idx][.EG] = f32(score_eg(score))
 	}
-
-	set(c_params, &idx, TEMPO_BONUS)
-
-	for piece in PieceType {
-		set(c_params, &idx, piece_score[piece])
-	}
-
-	pst := [PieceType]^[64]Score{
-		.Pawn	= &pawn_tbl,
-		.Knight = &knight_tbl,
-		.Bishop = &bishop_tbl,
-		.Rook	= &rook_tbl,
-		.Queen	= &queen_tbl,
-		.King	= &king_tbl,
-	}
-	for piece in PieceType {
-		for sq in 0..<64 {
-			set(c_params, &idx, pst[piece][sq])
-		}
-	}
-
-	set(c_params, &idx, ISOLATED_PAWN)
-	set(c_params, &idx, BACKWARD_PAWN)
-	set(c_params, &idx, CONNECTED_PAWN)
-
-	for i in 0..<len(STACKED_PAWN) {
-		set(c_params, &idx, STACKED_PAWN[i])
-	}
-
-	set(c_params, &idx, ISOLATED_DOUBLED)
-
-	for i in 0..<len(PASSED_PAWN) {
-		set(c_params, &idx, PASSED_PAWN[i])
-	}
-	for i in 0..<len(CONNECTED_PASSED_PAWN) {
-		set(c_params, &idx, CONNECTED_PASSED_PAWN[i])
-	}
-
-	set(c_params, &idx, BISHOP_PAIR)
-	set(c_params, &idx, ROOK_OPEN_FILE)
-	set(c_params, &idx, ROOK_SEMI_OPEN_FILE)
-
-	for i in 0..<len(KNIGHT_MOBILITY) do set(c_params, &idx, KNIGHT_MOBILITY[i])
-	for i in 0..<len(BISHOP_MOBILITY) do set(c_params, &idx, BISHOP_MOBILITY[i])
-	for i in 0..<len(ROOK_MOBILITY)  do set(c_params, &idx, ROOK_MOBILITY[i])
-	for i in 0..<len(QUEEN_MOBILITY) do set(c_params, &idx, QUEEN_MOBILITY[i])
-
-	for i in 0..<len(KING_SHELTER) do set(c_params, &idx, KING_SHELTER[i])
-	for i in 0..<len(PAWN_STORM) do set(c_params, &idx, PAWN_STORM[i])
 }
 
 init_tuples :: proc(
@@ -359,17 +311,15 @@ init_tuples :: proc(
 	length, tuple_idx: int
 
 	for i in 0..< N_EVAL_TERMS {
-		if coeffs[i][.White] - coeffs[i][.Black] != 0 do length += 1
+		if coeffs[i][.White] != coeffs[i][.Black] do length += 1
 	}
 
-	entry.n_tuples = length
 	entry.tuples = make([]TunerTuple, length)
 
 	for i in 0..< N_EVAL_TERMS {
-		tuple := TunerTuple{i, coeffs[i][.White], coeffs[i][.Black]}
-
-		if coeffs[i][.White] - coeffs[i][.Black] != 0 {
-			entry.tuples[tuple_idx] = tuple
+		coeff := coeffs[i][.White] - coeffs[i][.Black]
+		if coeff != 0 {
+			entry.tuples[tuple_idx] = TunerTuple{i, coeff}
 			tuple_idx += 1
 		}
 	}
@@ -389,17 +339,14 @@ init_entry :: proc(
 
 	entry.mg_factor = f32(phase) / 24
 	entry.eg_factor = f32(24 - phase) / 24
-	entry.phase = (phase * 256 + 12) / 24
 
 	entry.static_eval = evaluate(position)
 	if position.turn == .Black { // Tuning is white relative
 		entry.static_eval = -entry.static_eval
 	}
 
-	coeffs = (cast(^[N_EVAL_TERMS][Colour]int)&trace)^
+	coeffs = (cast(^[N_EVAL_TERMS][Colour]int)&trace.coeffs)^
 	init_tuples(entry, coeffs)
-
-	entry.turn = position.turn
 
 	entry.normal = trace.normal
 	// entry.safety = trace.safety
@@ -508,21 +455,18 @@ linear_evaluation :: proc(
 	params: [][Phase]f32,
 ) -> f32 {
 	mixed, midgame, endgame: f32
-	w_safety, b_safety: [Phase]f32
-	mg, eg: [Colour]f32
+	mg_delta, eg_delta: f32
 
-	for n in 0..<entry.n_tuples {
-		tuple := entry.tuples[n]
+	for tuple in entry.tuples {
 		i := tuple.idx
-		mg[.White] += f32(tuple.w_coeff) * params[i][.MG]
-		mg[.Black] += f32(tuple.b_coeff) * params[i][.MG]
-		eg[.White] += f32(tuple.w_coeff) * params[i][.EG]
-		eg[.Black] += f32(tuple.b_coeff) * params[i][.EG]
+		coeff := f32(tuple.coeff)
+		mg_delta += coeff * params[i][.MG]
+		eg_delta += coeff * params[i][.EG]
 	}
 
 	// add delta to normal eval
-	midgame = f32(score_mg(entry.normal)) + mg[.White] - mg[.Black]
-	endgame = f32(score_eg(entry.normal)) + eg[.White] - eg[.Black]
+	midgame = f32(score_mg(entry.normal)) + mg_delta
+	endgame = f32(score_eg(entry.normal)) + eg_delta
 
 	mixed = midgame * entry.mg_factor + endgame * entry.eg_factor
 
@@ -585,13 +529,12 @@ update_single_gradient :: proc(
 	mg_base := X * entry.mg_factor
 	eg_base := X * entry.eg_factor
 
-	for n in 0..<entry.n_tuples {
-		i := entry.tuples[n].idx
-		cw := f32(entry.tuples[n].w_coeff)
-		cb := f32(entry.tuples[n].b_coeff)
+	for tuple in entry.tuples {
+		i := tuple.idx
+		coeff := f32(tuple.coeff)
 
-		gradient[i][.MG] += mg_base * (cw - cb)
-		gradient[i][.EG] += eg_base * (cw - cb)
+		gradient[i][.MG] += mg_base * coeff
+		gradient[i][.EG] += eg_base * coeff
 	}
 }
 
@@ -632,6 +575,142 @@ tuned_evaluation_errors :: proc(
 	return total / f32(n)
 }
 
+write_indent :: proc(b: ^strings.Builder, indent: int) {
+	for _ in 0..<indent {
+		fmt.sbprint(b, "\t")
+	}
+}
+
+enum_name_for_value :: proc(info: ^reflect.Type_Info, value: int) -> string {
+	if info == nil do return ""
+
+	base := reflect.type_info_base(info)
+	if e, ok := base.variant.(reflect.Type_Info_Enum); ok {
+		for enum_value, i in e.values {
+			if int(enum_value) == value {
+				return e.names[i]
+			}
+		}
+	}
+
+	return ""
+}
+
+write_tuned_score :: proc(b: ^strings.Builder, values: [][Phase]int, idx: ^int) {
+	fmt.sbprintf(b, "S(%d,%d)", values[idx^][.MG], values[idx^][.EG])
+	idx^ += 1
+}
+
+write_eval_weight_array :: proc(
+	b: ^strings.Builder,
+	elem: ^reflect.Type_Info,
+	count: int,
+	values: [][Phase]int,
+	idx: ^int,
+	indent: int,
+	enum_info: ^reflect.Type_Info = nil,
+	min_value: int = 0,
+) {
+	fmt.sbprintln(b, "{")
+
+	if elem.id == typeid_of(Score) {
+		if enum_info != nil {
+			for i in 0..<count {
+				write_indent(b, indent + 1)
+				name := enum_name_for_value(enum_info, min_value + i)
+				if name != "" do fmt.sbprintf(b, ".{} = ", name)
+
+				write_tuned_score(b, values, idx)
+				fmt.sbprintln(b, ",")
+			}
+		} else {
+			for i in 0..<count {
+				if i % 8 == 0 do write_indent(b, indent + 1)
+
+				write_tuned_score(b, values, idx)
+				fmt.sbprint(b, ",")
+				if (i + 1) % 8 == 0 || i == count - 1 {
+					fmt.sbprintln(b)
+				} else {
+					fmt.sbprint(b, " ")
+				}
+			}
+		}
+	} else {
+		for i in 0..<count {
+			write_indent(b, indent + 1)
+			if enum_info != nil {
+				name := enum_name_for_value(enum_info, min_value + i)
+				if name != "" do fmt.sbprintf(b, ".{} = ", name)
+			}
+
+			write_eval_weight_value(b, elem, values, idx, indent + 1)
+			fmt.sbprintln(b, ",")
+		}
+	}
+
+	write_indent(b, indent)
+	fmt.sbprint(b, "}")
+}
+
+write_eval_weight_value :: proc(
+	b: ^strings.Builder,
+	info: ^reflect.Type_Info,
+	values: [][Phase]int,
+	idx: ^int,
+	indent: int,
+) {
+	if info.id == typeid_of(Score) {
+		write_tuned_score(b, values, idx)
+		return
+	}
+
+	base := reflect.type_info_base(info)
+	#partial switch v in base.variant {
+	case reflect.Type_Info_Struct:
+		fmt.sbprintln(b, "{")
+		for i in 0..<int(v.field_count) {
+			write_indent(b, indent + 1)
+			fmt.sbprintf(b, "{} = ", v.names[i])
+			write_eval_weight_value(b, v.types[i], values, idx, indent + 1)
+			fmt.sbprintln(b, ",")
+		}
+		write_indent(b, indent)
+		fmt.sbprint(b, "}")
+
+	case reflect.Type_Info_Array:
+		write_eval_weight_array(b, v.elem, v.count, values, idx, indent)
+
+	case reflect.Type_Info_Enumerated_Array:
+		write_eval_weight_array(
+			b,
+			v.elem,
+			v.count,
+			values,
+			idx,
+			indent,
+			v.index,
+			int(v.min_value),
+		)
+
+	case:
+		panic("unsupported eval weight type")
+	}
+}
+
+@(test)
+eval_weight_writer_covers_all_terms :: proc(t: ^testing.T) {
+	values: [N_EVAL_TERMS][Phase]int
+	idx := 0
+
+	b: strings.Builder
+	strings.builder_init(&b)
+	defer strings.builder_destroy(&b)
+
+	write_eval_weight_value(&b, type_info_of(EvalWeights), values[:], &idx, 0)
+	testing.expect_value(t, idx, N_EVAL_TERMS)
+}
+
 print_params :: proc(
 	params: [][Phase]f32,
 	c_params: [][Phase]f32,
@@ -642,118 +721,22 @@ print_params :: proc(
 	strings.builder_init(&b)
 	defer strings.builder_destroy(&b)
 
-	val :: proc(params, c_params: [][Phase]f32, i: int, p: Phase) -> int {
-		return int(math.round(f64(c_params[i][p] + params[i][p])))
-	}
-
-	s :: proc(b: ^strings.Builder, mg, eg: int) {
-		fmt.sbprintf(b, "S(%d,%d)", mg, eg)
-	}
-
-	print_scalar :: proc(b: ^strings.Builder, name: string, params, c_params: [][Phase]f32, idx: ^int) {
-		mg := int(math.round(f64(c_params[idx^][.MG] + params[idx^][.MG])))
-		eg := int(math.round(f64(c_params[idx^][.EG] + params[idx^][.EG])))
-		fmt.sbprintfln(b, "{} := S(%d,%d)", name, mg, eg)
-		idx^ += 1
-	}
-
-	print_table :: proc(b: ^strings.Builder, name: string, n: int, params, c_params: [][Phase]f32, idx: ^int) {
-		fmt.sbprintfln(b, "\n{} := [{}]Score{{", name, n)
-		fmt.sbprint(b, "	")
-		for i in 0..<n {
-			mg := int(math.round(f64(c_params[idx^][.MG] + params[idx^][.MG])))
-			eg := int(math.round(f64(c_params[idx^][.EG] + params[idx^][.EG])))
-			fmt.sbprintf(b, "S(%d,%d),", mg, eg)
-			if (i + 1) % 5 == 0 && i < n-1 do fmt.sbprint(b, "\n	")
-			idx^ += 1
-		}
-		fmt.sbprintln(b, "\n}")
+	values: [N_EVAL_TERMS][Phase]int
+	for i in 0..<N_EVAL_TERMS {
+		values[i][.MG] = int(math.round(f64(c_params[i][.MG] + params[i][.MG])))
+		values[i][.EG] = int(math.round(f64(c_params[i][.EG] + params[i][.EG])))
 	}
 
 	idx := 0
-
+	fmt.sbprintln(&b, "package blunderbuss")
+	fmt.sbprintln(&b)
 	fmt.sbprintfln(&b, "// Generated on {}", timestamp)
+	fmt.sbprintln(&b)
+	fmt.sbprint(&b, "eval_weights: EvalWeights = ")
+	write_eval_weight_value(&b, type_info_of(EvalWeights), values[:], &idx, 0)
+	fmt.sbprintln(&b)
 
-	mg := val(params, c_params, idx, .MG)
-	eg := val(params, c_params, idx, .EG)
-	fmt.sbprintfln(&b, "\nTEMPO_BONUS := S(%d,%d)", mg, eg)
-	idx += size_of(type_of(Coeffs{}.tempo)) / TERM_SIZE
-
-	fmt.sbprintln(&b, "\npiece_score: [PieceType]Score = {")
-	for piece in PieceType {
-		mg := val(params, c_params, idx, .MG)
-		eg := val(params, c_params, idx, .EG)
-		fmt.sbprintf(&b, "	  .{} = ", piece)
-		s(&b, mg, eg)
-		fmt.sbprintln(&b, ",")
-		idx += 1
-	}
-	fmt.sbprintln(&b, "}")
-
-	piece_names := [PieceType]string{
-		.Pawn="pawn_tbl", .Knight="knight_tbl", .Bishop="bishop_tbl",
-		.Rook="rook_tbl", .Queen="queen_tbl", .King="king_tbl",
-	}
-	for piece in PieceType {
-		fmt.sbprintfln(&b, "\n{}: [64]Score = {{", piece_names[piece])
-		for sq in 0..<64 {
-			if sq % 8 == 0 do fmt.sbprint(&b, "    ")
-			mg := val(params, c_params, idx, .MG)
-			eg := val(params, c_params, idx, .EG)
-			s(&b, mg, eg)
-			fmt.sbprint(&b, ", " if sq % 8 < 7 else ",\n")
-			idx += 1
-		}
-		fmt.sbprintln(&b, "}")
-	}
-
-	fmt.sbprintln(&b, "// Pawn structure")
-	print_scalar(&b, "ISOLATED_PAWN", params, c_params, &idx)
-	print_scalar(&b, "BACKWARD_PAWN", params, c_params, &idx)
-	print_scalar(&b, "CONNECTED_PAWN", params, c_params, &idx)
-
-	fmt.sbprint(&b, "\nSTACKED_PAWN: [5]Score = {")
-	for _ in 0..<5 {
-		mg := val(params, c_params, idx, .MG)
-		eg := val(params, c_params, idx, .EG)
-		s(&b, mg, eg); fmt.sbprint(&b, ", ")
-		idx += 1
-	}
-	fmt.sbprintln(&b, "}")
-
-	print_scalar(&b, "ISOLATED_DOUBLED", params, c_params, &idx)
-
-	fmt.sbprint(&b, "\nPASSED_PAWN := [8]Score{")
-	for _ in 0..<8 {
-		mg := val(params, c_params, idx, .MG)
-		eg := val(params, c_params, idx, .EG)
-		s(&b, mg, eg); fmt.sbprint(&b, ", ")
-		idx += 1
-	}
-	fmt.sbprintln(&b, "}")
-
-	fmt.sbprint(&b, "\nCONNECTED_PASSED_PAWN := [8]Score{")
-	for _ in 0..<8 {
-		mg := val(params, c_params, idx, .MG)
-		eg := val(params, c_params, idx, .EG)
-		s(&b, mg, eg); fmt.sbprint(&b, ", ")
-		idx += 1
-	}
-	fmt.sbprintln(&b, "}")
-
-	print_scalar(&b, "BISHOP_PAIR",			 params, c_params, &idx)
-	print_scalar(&b, "ROOK_OPEN_FILE",		 params, c_params, &idx)
-	print_scalar(&b, "ROOK_SEMI_OPEN_FILE",  params, c_params, &idx)
-
-	print_table(&b, "KNIGHT_MOBILITY", len(KNIGHT_MOBILITY), params, c_params, &idx)
-	print_table(&b, "BISHOP_MOBILITY", len(BISHOP_MOBILITY), params, c_params, &idx)
-	print_table(&b, "ROOK_MOBILITY",   len(ROOK_MOBILITY),	params, c_params, &idx)
-	print_table(&b, "QUEEN_MOBILITY",  len(QUEEN_MOBILITY),	params, c_params, &idx)
-
-	fmt.sbprintln(&b, "// King safety")
-	print_table(&b, "KING_SHELTER", len(KING_SHELTER), params, c_params, &idx)
-	print_table(&b, "PAWN_STORM", len(PAWN_STORM), params, c_params, &idx)
-
+	assert(idx == N_EVAL_TERMS)
 	if werr := os.write_entire_file(path, strings.to_string(b)); werr != nil {
 		fmt.println("warning: could not write weights: {}", werr)
 	}

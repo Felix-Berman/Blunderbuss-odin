@@ -9,28 +9,54 @@ TRACING :: #config(TRACING, false) || #config(TUNING, false)
 
 TAPER_SCALE :: 256 // represent fractional values 0.0 -> 0, 1.0 -> 256
 
-Coeffs :: struct #packed {
-	// normal
-	tempo: [Colour]int,
-	material_count: [PieceType][Colour]int,
-	piece_sq_tbls: [PieceType][64][Colour]int,
-	isolated_pawns: [Colour]int,
-	backward_pawns: [Colour]int,
-	connected_pawns: [Colour]int,
-	doubled_pawns: [5][Colour]int,
-	isolated_doubled: [Colour]int,
-	passed_pawns: [8][Colour]int,
-	connected_passed: [8][Colour]int,
-	bishop_pair: [Colour]int,
-	rook_open: [Colour]int,
-	rook_semi_open: [Colour]int,
-	knight_mobility: [len(KNIGHT_MOBILITY)][Colour]int,
-	bishop_mobility: [len(BISHOP_MOBILITY)][Colour]int,
-	rook_mobility: [len(ROOK_MOBILITY)][Colour]int,
-	queen_mobility: [len(QUEEN_MOBILITY)][Colour]int,
-	king_shelter: [8][Colour]int,
-	pawn_storm: [8][Colour]int,
+KNIGHT_MOBILITY_COUNT :: 9
+BISHOP_MOBILITY_COUNT :: 14
+ROOK_MOBILITY_COUNT   :: 15
+QUEEN_MOBILITY_COUNT  :: 28
+
+EvalTerms :: struct($T: typeid) #packed {
+	tempo: T,
+	material: [PieceType]T,
+	piece_sq_tbls: [PieceType][64]T,
+	isolated_pawns: T,
+	backward_pawns: T,
+	connected_pawns: T,
+	doubled_pawns: [5]T,
+	isolated_doubled: T,
+	passed_pawns: [8]T,
+	connected_passed: [8]T,
+	bishop_pair: T,
+	rook_open: T,
+	rook_semi_open: T,
+	knight_mobility: [KNIGHT_MOBILITY_COUNT]T,
+	bishop_mobility: [BISHOP_MOBILITY_COUNT]T,
+	rook_mobility: [ROOK_MOBILITY_COUNT]T,
+	queen_mobility: [QUEEN_MOBILITY_COUNT]T,
+	king_shelter: [8]T,
+	pawn_storm: [8]T,
 }
+
+EvalWeights :: EvalTerms(Score)
+Coeffs :: EvalTerms([Colour]int)
+EvalTerm :: distinct i32
+
+TERM_SIZE :: size_of([Colour]int)
+N_EVAL_TERMS :: size_of(Coeffs) / TERM_SIZE
+#assert(size_of(Coeffs) % TERM_SIZE == 0)
+#assert(size_of(EvalWeights) % size_of(Score) == 0)
+#assert(size_of(EvalWeights) / size_of(Score) == N_EVAL_TERMS)
+#assert(size_of(EvalTerms(EvalTerm)) % size_of(EvalTerm) == 0)
+#assert(size_of(EvalTerms(EvalTerm)) / size_of(EvalTerm) == N_EVAL_TERMS)
+
+init_eval_terms :: proc "contextless" () -> (terms: EvalTerms(EvalTerm)) {
+	flat := cast(^[N_EVAL_TERMS]EvalTerm)&terms
+	for i in 0..<N_EVAL_TERMS {
+		flat[i] = EvalTerm(i)
+	}
+	return
+}
+
+eval_terms := init_eval_terms()
 
 Trace :: struct {
 	coeffs: Coeffs,
@@ -69,13 +95,24 @@ score_phase :: proc(s: Score, p: Phase) -> (val: i16) {
 	return
 }
 
-piece_sq_tbl: [PieceType]^[64]Score = {
-	.Pawn	= &pawn_tbl,
-	.Knight = &knight_tbl,
-	.Bishop = &bishop_tbl,
-	.Rook	= &rook_tbl,
-	.Queen	= &queen_tbl,
-	.King	= &king_tbl,
+eval_term_weight :: #force_inline proc(term: EvalTerm) -> Score {
+	weights := cast(^[N_EVAL_TERMS]Score)&eval_weights
+	return weights[int(term)]
+}
+
+trace_eval_term :: #force_inline proc(side: Colour, term: EvalTerm) -> Score {
+	when TRACING {
+		coeffs := cast(^[N_EVAL_TERMS][Colour]int)&trace.coeffs
+		coeffs[int(term)][side] += 1
+	}
+
+	return eval_term_weight(term)
+}
+
+add_eval_term :: #force_inline proc(score: ^Score, side: Colour, term: EvalTerm) -> Score {
+	s := trace_eval_term(side, term)
+	score^ += s
+	return s
 }
 
 piece_phase: [PieceType]int = {
@@ -98,7 +135,6 @@ evaluate :: proc(position: ^Position) -> int {
 
 	when TRACING {
 		trace = Trace{}
-		trace.coeffs.tempo[position.turn] = 1
 		trace.turn = us
 	}
 
@@ -131,13 +167,9 @@ evaluate :: proc(position: ^Position) -> int {
 					lookup_sq ~= 56 // PSQT defined from black perspective
 				}
 
-				scores[us] += piece_score[piece] + piece_sq_tbl[piece][lookup_sq]
+				add_eval_term(&scores[us], us, eval_terms.material[piece])
+				add_eval_term(&scores[us], us, eval_terms.piece_sq_tbls[piece][lookup_sq])
 				phase += piece_phase[piece]
-
-				when TRACING {
-					trace.coeffs.material_count[piece][us] += 1
-					trace.coeffs.piece_sq_tbls[piece][lookup_sq][us] = 1
-				}
 
 				to_bb: u64
 				switch piece {
@@ -146,36 +178,30 @@ evaluate :: proc(position: ^Position) -> int {
 				case .Knight:
 					to_bb = KNIGHT_TABLE[from]
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
-					scores[us] += KNIGHT_MOBILITY[mobility]
-					when TRACING do trace.coeffs.knight_mobility[mobility][us] += 1
+					add_eval_term(&scores[us], us, eval_terms.knight_mobility[mobility])
 				case .Bishop:
 					to_bb = magic_bishop_moves(from, occ)
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
-					scores[us] += BISHOP_MOBILITY[mobility]
-					when TRACING do trace.coeffs.bishop_mobility[mobility][us] += 1
+					add_eval_term(&scores[us], us, eval_terms.bishop_mobility[mobility])
 
 					bishop_pair += {square_colour(from)}
 				case .Rook:
 					to_bb = magic_rook_moves(from, occ)
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
-					scores[us] += ROOK_MOBILITY[mobility]
-					when TRACING do trace.coeffs.rook_mobility[mobility][us] += 1
+					add_eval_term(&scores[us], us, eval_terms.rook_mobility[mobility])
 
 					file := SQ_MASKS[from].file
 					if pawns_us & file == 0 {
 						if pawns_them & file == 0 {
-							scores[us] += ROOK_OPEN_FILE
-							when TRACING do trace.coeffs.rook_open[us] += 1
+							add_eval_term(&scores[us], us, eval_terms.rook_open)
 						} else {
-							scores[us] += ROOK_SEMI_OPEN_FILE
-							when TRACING do trace.coeffs.rook_semi_open[us] += 1
+							add_eval_term(&scores[us], us, eval_terms.rook_semi_open)
 						}
 					}
 				case .Queen:
 					to_bb = magic_queen_moves(from, occ)
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
-					scores[us] += QUEEN_MOBILITY[mobility]
-					when TRACING do trace.coeffs.queen_mobility[mobility][us] += 1
+					add_eval_term(&scores[us], us, eval_terms.queen_mobility[mobility])
 
 				case .King:
 					to_bb = KING_TABLE[from]
@@ -185,15 +211,14 @@ evaluate :: proc(position: ^Position) -> int {
 
 
 		if bishop_pair == {.White, .Black} {
-			scores[us] += BISHOP_PAIR
-			when TRACING do trace.coeffs.bishop_pair[us] = 1
+			add_eval_term(&scores[us], us, eval_terms.bishop_pair)
 		}
 
 		scores[us] += pawn_structure(position, us)
 		scores[us] += king_shelter(position, us)
 	}
 
-	scores[us] += TEMPO_BONUS
+	add_eval_term(&scores[us], us, eval_terms.tempo)
 
 	when TRACING do trace.normal = scores[.White] - scores[.Black]
 
@@ -243,11 +268,9 @@ king_shelter :: proc(position: ^Position, us: Colour) -> (score: Score) {
 		shield_distance %= 8
 		storm_distance %= 8
 
-		score += KING_SHELTER[shield_distance]
-		when TRACING do trace.coeffs.king_shelter[shield_distance][us] += 1
+		add_eval_term(&score, us, eval_terms.king_shelter[shield_distance])
 
-		score += PAWN_STORM[storm_distance]
-		when TRACING do trace.coeffs.pawn_storm[storm_distance][us] += 1
+		add_eval_term(&score, us, eval_terms.pawn_storm[storm_distance])
 	}
 
 	return
@@ -291,8 +314,7 @@ pawn_structure :: proc(position: ^Position, us: Colour) -> (score: Score) {
 
 		defenders := pawns_us & pawn_attacks(them, bitboard(sq))
 		if defenders != 0 {
-			score += CONNECTED_PAWN
-			when TRACING do trace.coeffs.connected_pawns[us] += 1
+			add_eval_term(&score, us, eval_terms.connected_pawns)
 		}
 
 		if (file_left | file_right) & pawns_us == 0 {
@@ -300,35 +322,28 @@ pawn_structure :: proc(position: ^Position, us: Colour) -> (score: Score) {
 		}
 
 		if ahead_mask & pawns_them == 0 {
-			score += PASSED_PAWN[pushed_distance]
-			when TRACING do trace.coeffs.passed_pawns[pushed_distance][us] += 1
+			add_eval_term(&score, us, eval_terms.passed_pawns[pushed_distance])
 
 			if defenders != 0 {
-				score += CONNECTED_PASSED_PAWN[pushed_distance]
-				when TRACING {
-					trace.coeffs.connected_passed[pushed_distance][us] += 1
-				}
+				add_eval_term(&score, us, eval_terms.connected_passed[pushed_distance])
 			}
 		}
 
 		if behind_mask & pawns_us == 0 && sentry_mask & pawns_them != 0 {
-			score += BACKWARD_PAWN
-			when TRACING do trace.coeffs.backward_pawns[us] += 1
+			add_eval_term(&score, us, eval_terms.backward_pawns)
 		}
 	}
 
 	for file in 0..<8 {
 		count := file_count[file]
-		score += STACKED_PAWN[min(count, 4)]
-		when TRACING do trace.coeffs.doubled_pawns[min(count, 4)][us] += 1
+		doubled_idx := min(count, 4)
+		add_eval_term(&score, us, eval_terms.doubled_pawns[doubled_idx])
 
 		if is_isolated[file] {
-			score += ISOLATED_PAWN
-			when TRACING do trace.coeffs.isolated_pawns[us] += 1
+			add_eval_term(&score, us, eval_terms.isolated_pawns)
 
 			if count > 1 {
-				score += ISOLATED_DOUBLED
-				when TRACING do trace.coeffs.isolated_doubled[us] += 1
+				add_eval_term(&score, us, eval_terms.isolated_doubled)
 			}
 		}
 	}
@@ -367,8 +382,8 @@ score_packing :: proc(t: ^testing.T) {
 	if !check(t, S(0, 0),	  S(0, 0))	   do return
 	if !check(t, S(500, 900), S(-300, 400)) do return
 	// Mobility extremes: min and max entries cancel cleanly
-	if !check(t, KNIGHT_MOBILITY[0], KNIGHT_MOBILITY[len(KNIGHT_MOBILITY)-1]) do return
-	if !check(t, ROOK_MOBILITY[len(ROOK_MOBILITY)-1], ROOK_MOBILITY[0])		  do return
+	if !check(t, eval_weights.knight_mobility[0], eval_weights.knight_mobility[KNIGHT_MOBILITY_COUNT-1]) do return
+	if !check(t, eval_weights.rook_mobility[ROOK_MOBILITY_COUNT-1], eval_weights.rook_mobility[0])		  do return
 }
 
 // Accumulates a packed Score for a worst-case pile of terms and verifies it
@@ -395,26 +410,26 @@ score_accumulation :: proc(t: ^testing.T) {
 	}
 
 	// Starting material on highest value PSQT squares
-	add(&acc, &ref_mg, &ref_eg, piece_score[.Pawn]	 + tbl_max(pawn_tbl), 8)
-	add(&acc, &ref_mg, &ref_eg, piece_score[.Knight] + tbl_max(knight_tbl), 2)
-	add(&acc, &ref_mg, &ref_eg, piece_score[.Bishop] + tbl_max(bishop_tbl), 2)
-	add(&acc, &ref_mg, &ref_eg, piece_score[.Rook]	 + tbl_max(rook_tbl), 2)
-	add(&acc, &ref_mg, &ref_eg, piece_score[.Queen]  + tbl_max(queen_tbl), 1)
-	add(&acc, &ref_mg, &ref_eg, piece_score[.King]	 + tbl_max(king_tbl), 1)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.material[.Pawn]   + tbl_max(eval_weights.piece_sq_tbls[.Pawn]), 8)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.material[.Knight] + tbl_max(eval_weights.piece_sq_tbls[.Knight]), 2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.material[.Bishop] + tbl_max(eval_weights.piece_sq_tbls[.Bishop]), 2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.material[.Rook]   + tbl_max(eval_weights.piece_sq_tbls[.Rook]), 2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.material[.Queen]  + tbl_max(eval_weights.piece_sq_tbls[.Queen]), 1)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.material[.King]   + tbl_max(eval_weights.piece_sq_tbls[.King]), 1)
 
 	// Max mobility for each piece type
-	add(&acc, &ref_mg, &ref_eg, KNIGHT_MOBILITY[len(KNIGHT_MOBILITY)-1], 2)
-	add(&acc, &ref_mg, &ref_eg, BISHOP_MOBILITY[len(BISHOP_MOBILITY)-1], 2)
-	add(&acc, &ref_mg, &ref_eg, ROOK_MOBILITY[len(ROOK_MOBILITY)-1],	 2)
-	add(&acc, &ref_mg, &ref_eg, QUEEN_MOBILITY[len(QUEEN_MOBILITY)-1],	 9)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.knight_mobility[KNIGHT_MOBILITY_COUNT-1], 2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.bishop_mobility[BISHOP_MOBILITY_COUNT-1], 2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.rook_mobility[ROOK_MOBILITY_COUNT-1],	 2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.queen_mobility[QUEEN_MOBILITY_COUNT-1],	 9)
 
 	// All structural bonuses active
-	add(&acc, &ref_mg, &ref_eg, BISHOP_PAIR)
-	add(&acc, &ref_mg, &ref_eg, ROOK_OPEN_FILE,			  2)
-	add(&acc, &ref_mg, &ref_eg, PASSED_PAWN[6],			  8)
-	add(&acc, &ref_mg, &ref_eg, CONNECTED_PASSED_PAWN[6], 8)
-	add(&acc, &ref_mg, &ref_eg, CONNECTED_PAWN,			  8)
-	add(&acc, &ref_mg, &ref_eg, TEMPO_BONUS)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.bishop_pair)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.rook_open,			  2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.passed_pawns[6],	  8)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.connected_passed[6], 8)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.connected_pawns,	  8)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.tempo)
 
 	// king safety
 	// add(&acc, &ref_mg, &ref_eg, ATTACK_STRENGTH[39])

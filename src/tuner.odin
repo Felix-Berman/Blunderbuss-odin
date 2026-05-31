@@ -349,6 +349,7 @@ init_base_params :: proc(c_params: [][Phase]f32) {
 	for i in 0..<len(QUEEN_MOBILITY) do set(c_params, &idx, QUEEN_MOBILITY[i])
 
 	for i in 0..<len(KING_SHELTER) do set(c_params, &idx, KING_SHELTER[i])
+	for i in 0..<len(PAWN_STORM) do set(c_params, &idx, PAWN_STORM[i])
 }
 
 init_tuples :: proc(
@@ -751,6 +752,7 @@ print_params :: proc(
 
 	fmt.sbprintln(&b, "// King safety")
 	print_table(&b, "KING_SHELTER", len(KING_SHELTER), params, c_params, &idx)
+	print_table(&b, "PAWN_STORM", len(PAWN_STORM), params, c_params, &idx)
 
 	if werr := os.write_entire_file(path, strings.to_string(b)); werr != nil {
 		fmt.println("warning: could not write weights: {}", werr)

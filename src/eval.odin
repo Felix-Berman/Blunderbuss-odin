@@ -28,7 +28,8 @@ Coeffs :: struct #packed {
 	bishop_mobility: [len(BISHOP_MOBILITY)][Colour]int,
 	rook_mobility: [len(ROOK_MOBILITY)][Colour]int,
 	queen_mobility: [len(QUEEN_MOBILITY)][Colour]int,
-	king_shelter: [9][Colour]int,
+	king_shelter: [8][Colour]int,
+	pawn_storm: [8][Colour]int,
 }
 
 Trace :: struct {
@@ -212,6 +213,7 @@ king_zone :: proc(side: Colour, king_sq: int) -> u64 {
 }
 
 king_shelter :: proc(position: ^Position, us: Colour) -> (score: Score) {
+	them := toggle(us)
 	king_us := position.pieces[us][.King]
 	king_sq := lsb(king_us)
 	king_rank := king_sq / 8
@@ -219,22 +221,33 @@ king_shelter :: proc(position: ^Position, us: Colour) -> (score: Score) {
 
 	shelter_mask := ranks_ahead(us, king_rank)
 	pawns_us := position.pieces[us][.Pawn] & shelter_mask
+	pawns_them := position.pieces[them][.Pawn] & shelter_mask
 
 	for offset in -1..=1 {
 		file := clamp(king_file, 1, 6) + offset
 		file_bb := H_FILE << uint(file)
 		
-		pawns_file := pawns_us & file_bb
-		// colour relative rank (open file when pawn_distance == 8)
-		pawn_distance: int
+		shield_file := pawns_us & file_bb
+		storm_file := pawns_them & file_bb
+
+		shield_distance, storm_distance: int
 		if us == .White {
-			pawn_distance = lsb(pawns_file) / 8
+			shield_distance = lsb(shield_file) / 8
+			storm_distance = lsb(storm_file) / 8
 		} else {
-			pawn_distance = int(intrinsics.count_leading_zeros(pawns_file) / 8)
+			shield_distance = int(intrinsics.count_leading_zeros(shield_file) / 8)
+			storm_distance = int(intrinsics.count_leading_zeros(storm_file) / 8)
 		}
 
-		score += KING_SHELTER[pawn_distance]
-		when TRACING do trace.coeffs.king_shelter[pawn_distance][us] += 1
+		// open files at index 0
+		shield_distance %= 8
+		storm_distance %= 8
+
+		score += KING_SHELTER[shield_distance]
+		when TRACING do trace.coeffs.king_shelter[shield_distance][us] += 1
+
+		score += PAWN_STORM[storm_distance]
+		when TRACING do trace.coeffs.pawn_storm[storm_distance][us] += 1
 	}
 
 	return

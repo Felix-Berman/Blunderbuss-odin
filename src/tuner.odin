@@ -19,7 +19,7 @@ TUNING_DATASET :: "training_sets/quiet-labeled.epd"
 N_THREADS :: 8
 K_PRECISION :: 10
 BATCH_SIZE :: 16384
-MAX_EPOCHS :: 100_000
+MAX_EPOCHS :: 1000
 LR_RATE :: 1
 LR_MIN :: 0.1
 LR_STEP_RATE :: 250
@@ -144,15 +144,14 @@ run_tuner :: proc() {
 
 		if epoch % REPORTING_RATE == 0 {
 			enforce_parameter_constraints(params, c_params)
-			print_params(params, c_params, weights_path, timestamp)
+			print_params(params, c_params, timestamp, weights_path)
 		}
 
 		rand.shuffle(entries[:])
 	}
 
 	enforce_parameter_constraints(params, c_params)
-	print_params(params, c_params, weights_path, timestamp)
-	print_params(params, c_params, EVAL_WEIGHTS_PATH, timestamp)
+	print_params(params, c_params, timestamp, EVAL_WEIGHTS_PATH, weights_path)
 }
 
 gradient_worker :: proc(t: ^thread.Thread) {
@@ -713,8 +712,8 @@ eval_weight_writer_covers_all_terms :: proc(t: ^testing.T) {
 print_params :: proc(
 	params: [][Phase]f32,
 	c_params: [][Phase]f32,
-	path: string,
 	timestamp: string,
+	paths: ..string,
 ) {
 	b: strings.Builder
 	strings.builder_init(&b)
@@ -736,7 +735,9 @@ print_params :: proc(
 	fmt.sbprintln(&b)
 
 	assert(idx == N_EVAL_TERMS)
-	if werr := os.write_entire_file(path, strings.to_string(b)); werr != nil {
-		fmt.println("warning: could not write weights: {}", werr)
+	for path in paths {
+		if werr := os.write_entire_file(path, strings.to_string(b)); werr != nil {
+			fmt.println("warning: could not write weights: {}", werr)
+		}
 	}
 }

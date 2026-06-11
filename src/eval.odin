@@ -32,7 +32,9 @@ EvalTerms :: struct($T: typeid) #packed {
 	bishop_mobility: [BISHOP_MOBILITY_COUNT]T,
 	rook_mobility: [ROOK_MOBILITY_COUNT]T,
 	queen_mobility: [QUEEN_MOBILITY_COUNT]T,
-	king_shelter: [8]T,
+	missing_shield: [2]T,
+	advanced_shield_one: [2]T,
+	advanced_shield_two: [2]T,
 	pawn_storm: [8]T,
 }
 
@@ -150,6 +152,8 @@ evaluate :: proc(position: ^Position) -> int {
 		king_them := lsb(pieces[them][.King])
 		king_zone := king_zone(them, king_them)
 
+		attacked_bb: u64
+
 		for bb, piece in pieces[us] {
 			from_bb := bb
 			for from_bb > 0 {
@@ -196,10 +200,11 @@ evaluate :: proc(position: ^Position) -> int {
 					to_bb = magic_queen_moves(from, occ)
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					add_eval_term(&scores[us], us, eval_terms.queen_mobility[mobility])
-
 				case .King:
 					to_bb = KING_TABLE[from]
 				}
+
+				attacked_bb |= to_bb
 			}
 		}
 
@@ -262,11 +267,26 @@ king_shelter :: proc(position: ^Position, us: Colour) -> (score: Score) {
 		shield_distance %= 8
 		storm_distance %= 8
 
-		add_eval_term(&score, us, eval_terms.king_shelter[shield_distance])
+		on_king := 0
+		if file == king_file {
+			on_king = 1
+		}
+
+		if shield_distance == 0 {
+			add_eval_term(&score, us, eval_terms.missing_shield[on_king])
+		} else if shield_distance == 1 {
+			add_eval_term(&score, us, eval_terms.advanced_shield_one[on_king])
+		} else if shield_distance == 2 {
+			add_eval_term(&score, us, eval_terms.advanced_shield_two[on_king])
+		}
 
 		add_eval_term(&score, us, eval_terms.pawn_storm[storm_distance])
 	}
 
+	return
+}
+
+attack_strength :: proc(position: ^Position, us: Colour) -> (score: Score) {
 	return
 }
 

@@ -73,14 +73,14 @@ S :: #force_inline proc "contextless" (mg, eg: i16) -> Score {
 	return Score(i32(eg) << 16 + i32(mg))
 }
 
-score_mg :: #force_inline proc(s: Score) -> i16 {
+score_mg :: #force_inline proc "contextless" (s: Score) -> i16 {
 	return i16(s)
 }
 
 // negative middlegame values borrow LSB from endgame value.
 // Adding 0x8000 to mg value with leading 1 (negative) carries to the endgame
 // value restoring it from the borrow
-score_eg :: #force_inline proc(s: Score) -> i16 {
+score_eg :: #force_inline proc "contextless" (s: Score) -> i16 {
 	return i16((s + 0x8000) >> 16)
 }
 
@@ -100,19 +100,13 @@ eval_term_weight :: #force_inline proc(term: EvalTerm) -> Score {
 	return weights[int(term)]
 }
 
-trace_eval_term :: #force_inline proc(side: Colour, term: EvalTerm) -> Score {
+add_eval_term :: #force_inline proc(score: ^Score, side: Colour, term: EvalTerm) {
 	when TRACING {
 		coeffs := cast(^[N_EVAL_TERMS][Colour]int)&trace.coeffs
 		coeffs[int(term)][side] += 1
 	}
 
-	return eval_term_weight(term)
-}
-
-add_eval_term :: #force_inline proc(score: ^Score, side: Colour, term: EvalTerm) -> Score {
-	s := trace_eval_term(side, term)
-	score^ += s
-	return s
+	score^ += eval_term_weight(term)
 }
 
 piece_phase: [PieceType]int = {

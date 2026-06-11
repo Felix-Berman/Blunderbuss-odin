@@ -25,6 +25,7 @@ CHECK_SCORE :: 20_000
 MAX_HISTORY :: 20_000
 HISTORY_BONUS :: 400
 PROMOTION_SCORE :: 800
+SEARCH_KING_VALUE :: 30_000
 
 // probably excessive beyond depth 4 but we'll find out after tuning
 FUTILITY_MARGIN := [MAX_DEPTH]int{
@@ -40,14 +41,26 @@ FUTILITY_MARGIN := [MAX_DEPTH]int{
 
 LMR_TABLE: [64][64]int
 
-piece_value: [PieceType]int = {
-	.Pawn = 100,
-	.Knight = 300,
-	.Bishop =  350,
-	.Rook = 500,
-	.Queen = 900,
-	.King = 30_000,
+// piece_value: [PieceType]int = {
+// 	.Pawn = 100,
+// 	.Knight = 300,
+// 	.Bishop =  350,
+// 	.Rook = 500,
+// 	.Queen = 900,
+// 	.King = 30_000,
+// }
+
+init_piece_values :: proc "contextless" () -> (values: [PieceType]int) {
+	for piece in PieceType {
+		s := eval_weights.material[piece]
+		values[piece] = max(int(score_mg(s)), int(score_eg(s)))
+	}
+
+	values[.King] = SEARCH_KING_VALUE
+	return
 }
+
+piece_value := init_piece_values()
 
 // global tables
 t_table: TTable

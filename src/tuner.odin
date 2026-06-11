@@ -26,7 +26,7 @@ LR_STEP_RATE :: 250
 LR_DROP_RATE :: 1.1
 REPORTING_RATE :: 20
 
-TunerTuple :: struct { idx, coeff: int }
+TunerTuple :: struct { idx, w_coeff, b_coeff: int }
 
 TunerEntry :: struct {
 	static_eval: int,
@@ -317,9 +317,10 @@ init_tuples :: proc(
 	entry.tuples = make([]TunerTuple, length)
 
 	for i in 0..< N_EVAL_TERMS {
-		coeff := coeffs[i][.White] - coeffs[i][.Black]
-		if coeff != 0 {
-			entry.tuples[tuple_idx] = TunerTuple{i, coeff}
+		w_coeff := coeffs[i][.White]
+		b_coeff := coeffs[i][.Black]
+		if w_coeff != b_coeff {
+			entry.tuples[tuple_idx] = TunerTuple{i, w_coeff, b_coeff}
 			tuple_idx += 1
 		}
 	}
@@ -349,8 +350,6 @@ init_entry :: proc(
 	init_tuples(entry, coeffs)
 
 	entry.normal = trace.normal
-	// entry.safety = trace.safety
-	// entry.attack = trace.attack
 }
 
 init_entries :: proc() -> (entries: [dynamic]TunerEntry) {
@@ -459,7 +458,7 @@ linear_evaluation :: proc(
 
 	for tuple in entry.tuples {
 		i := tuple.idx
-		coeff := f32(tuple.coeff)
+		coeff := f32(tuple.w_coeff - tuple.b_coeff)
 		mg_delta += coeff * params[i][.MG]
 		eg_delta += coeff * params[i][.EG]
 	}
@@ -531,7 +530,7 @@ update_single_gradient :: proc(
 
 	for tuple in entry.tuples {
 		i := tuple.idx
-		coeff := f32(tuple.coeff)
+		coeff := f32(tuple.w_coeff - tuple.b_coeff)
 
 		gradient[i][.MG] += mg_base * coeff
 		gradient[i][.EG] += eg_base * coeff

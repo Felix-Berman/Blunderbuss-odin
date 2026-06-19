@@ -13,6 +13,8 @@ KNIGHT_MOBILITY_COUNT :: 9
 BISHOP_MOBILITY_COUNT :: 14
 ROOK_MOBILITY_COUNT   :: 15
 QUEEN_MOBILITY_COUNT  :: 28
+KING_SAFETY_MG_SCALE  :: 16
+KING_SAFETY_EG_SCALE  :: 4
 
 EvalTerms :: struct($T: typeid) #packed {
 	tempo: T,
@@ -36,6 +38,7 @@ EvalTerms :: struct($T: typeid) #packed {
 	advanced_shield_one: [2]T,
 	advanced_shield_two: [2]T,
 	pawn_storm: [8]T,
+	attacker_weight: [PieceType]T,
 }
 
 EvalWeights :: EvalTerms(Score)
@@ -63,7 +66,8 @@ eval_terms := init_eval_terms()
 Trace :: struct {
 	coeffs: Coeffs,
 	normal: Score,
-	turn: Colour
+	turn: Colour,
+	attacker_count: [Colour]int,
 }
 
 trace: Trace
@@ -86,12 +90,12 @@ score_eg :: #force_inline proc "contextless" (s: Score) -> i16 {
 	return i16((s + 0x8000) >> 16)
 }
 
-score_phase :: proc(s: Score, p: Phase) -> (val: i16) {
+score_phase :: proc "contextless" (s: Score, p: Phase) -> (val: int) {
 	switch p {
 	case .MG:
-		val = score_mg(s)
+		val = int(score_mg(s))
 	case .EG:
-		val = score_eg(s)
+		val = int(score_eg(s))
 	}
 
 	return
@@ -102,13 +106,35 @@ eval_term_weight :: #force_inline proc(term: EvalTerm) -> Score {
 	return weights[int(term)]
 }
 
-add_eval_term :: #force_inline proc(score: ^Score, side: Colour, term: EvalTerm) {
+trace_eval_term :: #force_inline proc(side: Colour, term: EvalTerm) {
 	when TRACING {
 		coeffs := cast(^[N_EVAL_TERMS][Colour]int)&trace.coeffs
 		coeffs[int(term)][side] += 1
 	}
+}
+
+add_eval_term :: #force_inline proc(score: ^Score, side: Colour, term: EvalTerm) {
+	trace_eval_term(side, term)
 
 	score^ += eval_term_weight(term)
+}
+
+king_safety_score :: proc(
+	attacker_count: int,
+	attacker_weight: Score,
+	shelter: Score,
+) -> Score {
+	attack_mg := attacker_count * max(score_phase(attacker_weight, .MG), 0) / 2
+	attack_eg := attacker_count * max(score_phase(attacker_weight, .EG), 0) / 2
+	factor_mg := max(100 - score_phase(shelter, .MG), 0)
+	factor_eg := max(100 - score_phase(shelter, .EG), 0)
+	danger_mg := attack_mg * factor_mg / 100
+	danger_eg := attack_eg * factor_eg / 100
+
+	mg := clamp(-danger_mg * danger_mg / KING_SAFETY_MG_SCALE, -32768, 32767)
+	eg := clamp(-danger_eg / KING_SAFETY_EG_SCALE, -32768, 32767)
+
+	return S(i16(mg), i16(eg))
 }
 
 piece_phase: [PieceType]int = {
@@ -135,11 +161,12 @@ evaluate :: proc(position: ^Position) -> int {
 	}
 
 	scores: [Colour]Score
-	attack_units: [Colour]Score
+	attacker_count: [Colour]int
+	attacker_weight: [Colour]Score
+	shelter: [Colour]Score
 	pieces := position.pieces
 	occ := occupied(position)
 	phase: int
-
 
 	for us in Colour {
 		them := toggle(us)
@@ -152,7 +179,8 @@ evaluate :: proc(position: ^Position) -> int {
 		king_them := lsb(pieces[them][.King])
 		king_zone := king_zone(them, king_them)
 
-		attacked_bb: u64
+		attackers: int
+		attack_weight: Score
 
 		for bb, piece in pieces[us] {
 			from_bb := bb
@@ -204,7 +232,10 @@ evaluate :: proc(position: ^Position) -> int {
 					to_bb = KING_TABLE[from]
 				}
 
-				attacked_bb |= to_bb
+				if piece != .Pawn && piece != .King && to_bb & king_zone != 0 {
+					attackers += 1
+					add_eval_term(&attack_weight, us, eval_terms.attacker_weight[piece])
+				}
 			}
 		}
 
@@ -214,12 +245,26 @@ evaluate :: proc(position: ^Position) -> int {
 		}
 
 		scores[us] += pawn_structure(position, us)
-		scores[us] += king_shelter(position, us)
+
+		attacker_count[us] = attackers
+		attacker_weight[us] = attack_weight
+	}
+
+	for us in Colour {
+		shelter[us] = king_shelter(position, us)
 	}
 
 	add_eval_term(&scores[us], us, eval_terms.tempo)
 
-	when TRACING do trace.normal = scores[.White] - scores[.Black]
+	when TRACING {
+		trace.normal = scores[.White] - scores[.Black]
+		trace.attacker_count = attacker_count
+	}
+
+	for side in Colour {
+		them := toggle(side)
+		scores[side] += king_safety_score(attacker_count[them], attacker_weight[them], shelter[side])
+	}
 
 	phase = clamp(phase, 0, 24)
 	phase = (TAPER_SCALE * phase + 12) / 24
@@ -283,10 +328,6 @@ king_shelter :: proc(position: ^Position, us: Colour) -> (score: Score) {
 		add_eval_term(&score, us, eval_terms.pawn_storm[storm_distance])
 	}
 
-	return
-}
-
-attack_strength :: proc(position: ^Position, us: Colour) -> (score: Score) {
 	return
 }
 

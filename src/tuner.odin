@@ -19,8 +19,8 @@ TUNING_DATASET :: "training_sets/quiet-labeled.epd"
 N_THREADS :: 8
 K_PRECISION :: 10
 BATCH_SIZE :: 16384
-MAX_EPOCHS :: 1000
-LR_RATE :: 1
+MAX_EPOCHS :: 2000
+LR_RATE :: 0.1
 LR_MIN :: 0.1
 LR_STEP_RATE :: 250
 LR_DROP_RATE :: 1.1
@@ -34,6 +34,7 @@ TunerEntry :: struct {
 	result: f32,
 	mg_factor: f32,
 	eg_factor: f32,
+	attacker_count: [Colour]int,
 	tuples: []TunerTuple,
 }
 
@@ -44,6 +45,33 @@ WorkerData :: struct {
 	gradient: [][Phase]f32,
 	error: f32,
 }
+
+TuneMethod :: enum u8 {
+	Normal,
+	King_Safety,
+}
+
+init_tune_methods :: proc "contextless" () -> (methods: [N_EVAL_TERMS]TuneMethod) {
+	for term in eval_terms.missing_shield {
+		methods[int(term)] = .King_Safety
+	}
+	for term in eval_terms.advanced_shield_one {
+		methods[int(term)] = .King_Safety
+	}
+	for term in eval_terms.advanced_shield_two {
+		methods[int(term)] = .King_Safety
+	}
+	for term in eval_terms.pawn_storm {
+		methods[int(term)] = .King_Safety
+	}
+	for term in eval_terms.attacker_weight {
+		methods[int(term)] = .King_Safety
+	}
+
+	return
+}
+
+tune_methods := init_tune_methods()
 
 delete_entries :: proc(entries: []TunerEntry) {
 	for &entry in entries {
@@ -197,10 +225,15 @@ enforce_parameter_constraints :: proc(params, c_params: [][Phase]f32) {
 	psqt_start := int(offset_of(Coeffs, piece_sq_tbls) / TERM_SIZE)
 	pawn_material_idx := material_start + int(PieceType.Pawn)
 	mobility_start := int(offset_of(Coeffs, knight_mobility) / TERM_SIZE)
+	attacker_weight_start := int(offset_of(Coeffs, attacker_weight) / TERM_SIZE)
 
 	// maintain centipawn relative eval
 	params[pawn_material_idx][.MG] = 0
 	params[pawn_material_idx][.EG] = 0
+	params[attacker_weight_start + int(PieceType.Pawn)][.MG] = 0
+	params[attacker_weight_start + int(PieceType.Pawn)][.EG] = 0
+	params[attacker_weight_start + int(PieceType.King)][.MG] = 0
+	params[attacker_weight_start + int(PieceType.King)][.EG] = 0
 
 	for piece in PieceType {
 		table_start := psqt_start + int(piece) * 64
@@ -310,7 +343,14 @@ init_tuples :: proc(
 	length, tuple_idx: int
 
 	for i in 0..< N_EVAL_TERMS {
-		if coeffs[i][.White] != coeffs[i][.Black] do length += 1
+		w_coeff := coeffs[i][.White]
+		b_coeff := coeffs[i][.Black]
+
+		if tune_methods[i] == .King_Safety {
+			if w_coeff != 0 || b_coeff != 0 do length += 1
+		} else if w_coeff != b_coeff {
+			length += 1
+		}
 	}
 
 	entry.tuples = make([]TunerTuple, length)
@@ -318,7 +358,9 @@ init_tuples :: proc(
 	for i in 0..< N_EVAL_TERMS {
 		w_coeff := coeffs[i][.White]
 		b_coeff := coeffs[i][.Black]
-		if w_coeff != b_coeff {
+
+		if tune_methods[i] == .King_Safety && (w_coeff != 0 || b_coeff != 0) ||
+			tune_methods[i] == .Normal && w_coeff != b_coeff {
 			entry.tuples[tuple_idx] = TunerTuple{i, w_coeff, b_coeff}
 			tuple_idx += 1
 		}
@@ -349,6 +391,7 @@ init_entry :: proc(
 	init_tuples(entry, coeffs)
 
 	entry.normal = trace.normal
+	entry.attacker_count = trace.attacker_count
 }
 
 init_entries :: proc() -> (entries: [dynamic]TunerEntry) {
@@ -452,23 +495,48 @@ linear_evaluation :: proc(
 	entry: ^TunerEntry,
 	params: [][Phase]f32,
 ) -> f32 {
-	mixed, midgame, endgame: f32
-	mg_delta, eg_delta: f32
+	midgame := f32(score_mg(entry.normal))
+	endgame := f32(score_eg(entry.normal))
+	attacker_weight, shelter: [Colour][Phase]f32
+	attacker_weight_start := int(eval_terms.attacker_weight[.Pawn])
 
 	for tuple in entry.tuples {
 		i := tuple.idx
-		coeff := f32(tuple.w_coeff - tuple.b_coeff)
-		mg_delta += coeff * params[i][.MG]
-		eg_delta += coeff * params[i][.EG]
+		if tune_methods[i] == .King_Safety {
+			for p in Phase {
+				value := f32(score_phase(eval_term_weight(EvalTerm(i)), p)) + params[i][p]
+				if i >= attacker_weight_start {
+					attacker_weight[.White][p] += f32(tuple.w_coeff) * value
+					attacker_weight[.Black][p] += f32(tuple.b_coeff) * value
+				} else {
+					shelter[.White][p] += f32(tuple.w_coeff) * value
+					shelter[.Black][p] += f32(tuple.b_coeff) * value
+				}
+			}
+		} else {
+			coeff := f32(tuple.w_coeff - tuple.b_coeff)
+			midgame += coeff * params[i][.MG]
+			endgame += coeff * params[i][.EG]
+		}
 	}
 
-	// add delta to normal eval
-	midgame = f32(score_mg(entry.normal)) + mg_delta
-	endgame = f32(score_eg(entry.normal)) + eg_delta
+	for side in Colour {
+		them := toggle(side)
+		sign: f32 = 1
+		if side == .Black do sign = -1
 
-	mixed = midgame * entry.mg_factor + endgame * entry.eg_factor
+		attack := f32(entry.attacker_count[them]) * max(attacker_weight[them][.MG], 0.0) / 2
+		factor := max(100.0 - shelter[side][.MG], 0.0)
+		danger := attack * factor / 100
+		midgame -= sign * danger * danger / KING_SAFETY_MG_SCALE
 
-	return mixed
+		attack = f32(entry.attacker_count[them]) * max(attacker_weight[them][.EG], 0.0) / 2
+		factor = max(100.0 - shelter[side][.EG], 0.0)
+		danger = attack * factor / 100
+		endgame -= sign * danger / KING_SAFETY_EG_SCALE
+	}
+
+	return midgame * entry.mg_factor + endgame * entry.eg_factor
 }
 
 compute_gradient :: proc(
@@ -519,20 +587,82 @@ update_single_gradient :: proc(
 	params: [][Phase]f32,
 	K: f32,
 ) {
-
 	E := linear_evaluation(entry, params)
 	S := sigmoid(K, E)
 	X := (entry.result - S) * S * (1 - S)
 
 	mg_base := X * entry.mg_factor
 	eg_base := X * entry.eg_factor
+	attacker_weight, shelter: [Colour][Phase]f32
+	attacker_gradient, shelter_gradient: [Colour][Phase]f32
+	attacker_weight_start := int(eval_terms.attacker_weight[.Pawn])
 
 	for tuple in entry.tuples {
 		i := tuple.idx
-		coeff := f32(tuple.w_coeff - tuple.b_coeff)
+		if tune_methods[i] == .King_Safety {
+			for p in Phase {
+				value := f32(score_phase(eval_term_weight(EvalTerm(i)), p)) + params[i][p]
+				if i >= attacker_weight_start {
+					attacker_weight[.White][p] += f32(tuple.w_coeff) * value
+					attacker_weight[.Black][p] += f32(tuple.b_coeff) * value
+				} else {
+					shelter[.White][p] += f32(tuple.w_coeff) * value
+					shelter[.Black][p] += f32(tuple.b_coeff) * value
+				}
+			}
+		} else {
+			coeff := f32(tuple.w_coeff - tuple.b_coeff)
+			gradient[i][.MG] += mg_base * coeff
+			gradient[i][.EG] += eg_base * coeff
+		}
+	}
 
-		gradient[i][.MG] += mg_base * coeff
-		gradient[i][.EG] += eg_base * coeff
+	for defender in Colour {
+		attacker := toggle(defender)
+		sign: f32 = 1
+		if defender == .Black do sign = -1
+
+		attack := f32(entry.attacker_count[attacker]) * max(attacker_weight[attacker][.MG], 0.0) / 2
+		factor := max(100.0 - shelter[defender][.MG], 0.0)
+		danger := attack * factor / 100
+		dscore_ddanger := -2 * danger / KING_SAFETY_MG_SCALE
+
+		if attacker_weight[attacker][.MG] > 0 && factor > 0 {
+			attacker_gradient[attacker][.MG] += sign * dscore_ddanger *
+				(f32(entry.attacker_count[attacker]) / 2) * factor / 100
+		}
+		if factor > 0 {
+			shelter_gradient[defender][.MG] += sign * dscore_ddanger * -attack / 100
+		}
+
+		attack = f32(entry.attacker_count[attacker]) * max(attacker_weight[attacker][.EG], 0.0) / 2
+		factor = max(100.0 - shelter[defender][.EG], 0.0)
+		dscore_ddanger = -1.0 / KING_SAFETY_EG_SCALE
+
+		if attacker_weight[attacker][.EG] > 0 && factor >= 0 {
+			attacker_gradient[attacker][.EG] += sign * dscore_ddanger *
+				(f32(entry.attacker_count[attacker]) / 2) * factor / 100
+		}
+		if factor > 0 {
+			shelter_gradient[defender][.EG] += sign * dscore_ddanger * -attack / 100
+		}
+	}
+
+	for tuple in entry.tuples {
+		i := tuple.idx
+		if tune_methods[i] != .King_Safety do continue
+
+		for p in Phase {
+			if i >= attacker_weight_start {
+				gradient[i][p] += (mg_base if p == .MG else eg_base) *
+					(f32(tuple.w_coeff) * attacker_gradient[.White][p] +
+					f32(tuple.b_coeff) * attacker_gradient[.Black][p])
+			} else {
+				gradient[i][p] += (mg_base if p == .MG else eg_base) *
+					(f32(tuple.w_coeff) * shelter_gradient[.White][p] +
+					f32(tuple.b_coeff) * shelter_gradient[.Black][p])
+			}
+		}
 	}
 }
 

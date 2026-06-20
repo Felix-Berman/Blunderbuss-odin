@@ -13,8 +13,7 @@ KNIGHT_MOBILITY_COUNT :: 9
 BISHOP_MOBILITY_COUNT :: 14
 ROOK_MOBILITY_COUNT   :: 15
 QUEEN_MOBILITY_COUNT  :: 28
-KING_SAFETY_MG_SCALE  :: 16
-KING_SAFETY_EG_SCALE  :: 4
+MAX_SAFE_CHECKS_PER_PIECE :: 2
 
 EvalTerms :: struct($T: typeid) #packed {
 	tempo: T,
@@ -38,7 +37,7 @@ EvalTerms :: struct($T: typeid) #packed {
 	advanced_shield_one: [2]T,
 	advanced_shield_two: [2]T,
 	pawn_storm: [8]T,
-	attacker_weight: [PieceType]T,
+	safe_check: [PieceType]T,
 }
 
 EvalWeights :: EvalTerms(Score)
@@ -67,7 +66,6 @@ Trace :: struct {
 	coeffs: Coeffs,
 	normal: Score,
 	turn: Colour,
-	attacker_count: [Colour]int,
 }
 
 trace: Trace
@@ -119,22 +117,16 @@ add_eval_term :: #force_inline proc(score: ^Score, side: Colour, term: EvalTerm)
 	score^ += eval_term_weight(term)
 }
 
-king_safety_score :: proc(
-	attacker_count: int,
-	attacker_weight: Score,
-	shelter: Score,
-) -> Score {
-	attack_mg := attacker_count * max(score_phase(attacker_weight, .MG), 0) / 2
-	attack_eg := attacker_count * max(score_phase(attacker_weight, .EG), 0) / 2
-	factor_mg := max(100 - score_phase(shelter, .MG), 0)
-	factor_eg := max(100 - score_phase(shelter, .EG), 0)
-	danger_mg := attack_mg * factor_mg / 100
-	danger_eg := attack_eg * factor_eg / 100
-
-	mg := clamp(-danger_mg * danger_mg / KING_SAFETY_MG_SCALE, -32768, 32767)
-	eg := clamp(-danger_eg / KING_SAFETY_EG_SCALE, -32768, 32767)
-
-	return S(i16(mg), i16(eg))
+add_safe_checks :: proc(
+	score: ^Score,
+	side: Colour,
+	piece: PieceType,
+	moves, check_targets, occ_us, pawn_controlled, enemy_king: u64,
+) {
+	checks := moves & check_targets &~ occ_us &~ pawn_controlled &~ enemy_king
+	for _ in 0..<min(pop_count(checks), MAX_SAFE_CHECKS_PER_PIECE) {
+		add_eval_term(score, side, eval_terms.safe_check[piece])
+	}
 }
 
 piece_phase: [PieceType]int = {
@@ -161,9 +153,6 @@ evaluate :: proc(position: ^Position) -> int {
 	}
 
 	scores: [Colour]Score
-	attacker_count: [Colour]int
-	attacker_weight: [Colour]Score
-	shelter: [Colour]Score
 	pieces := position.pieces
 	occ := occupied(position)
 	phase: int
@@ -177,15 +166,14 @@ evaluate :: proc(position: ^Position) -> int {
 		bishop_pair: bit_set[Colour]
 
 		king_them := lsb(pieces[them][.King])
-		king_zone := king_zone(them, king_them)
-
-		attackers: int
-		attack_weight: Score
+		king_them_bb := pieces[them][.King]
 
 		for bb, piece in pieces[us] {
 			from_bb := bb
 			for from_bb > 0 {
 				from := pop_lsb(&from_bb)
+				from_bit := bitboard(from)
+				occ_after_from := occ &~ from_bit
 
 				// count material
 				lookup_sq := from
@@ -205,10 +193,18 @@ evaluate :: proc(position: ^Position) -> int {
 					to_bb = KNIGHT_TABLE[from]
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					add_eval_term(&scores[us], us, eval_terms.knight_mobility[mobility])
+					add_safe_checks(
+						&scores[us], us, piece, to_bb, KNIGHT_TABLE[king_them],
+						occ_us, pawn_controlled, king_them_bb,
+					)
 				case .Bishop:
 					to_bb = magic_bishop_moves(from, occ)
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					add_eval_term(&scores[us], us, eval_terms.bishop_mobility[mobility])
+					add_safe_checks(
+						&scores[us], us, piece, to_bb, magic_bishop_moves(king_them, occ_after_from),
+						occ_us, pawn_controlled, king_them_bb,
+					)
 
 					bishop_pair += {square_colour(from)}
 				case .Rook:
@@ -224,17 +220,20 @@ evaluate :: proc(position: ^Position) -> int {
 							add_eval_term(&scores[us], us, eval_terms.rook_semi_open)
 						}
 					}
+					add_safe_checks(
+						&scores[us], us, piece, to_bb, magic_rook_moves(king_them, occ_after_from),
+						occ_us, pawn_controlled, king_them_bb,
+					)
 				case .Queen:
 					to_bb = magic_queen_moves(from, occ)
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					add_eval_term(&scores[us], us, eval_terms.queen_mobility[mobility])
+					add_safe_checks(
+						&scores[us], us, piece, to_bb, magic_queen_moves(king_them, occ_after_from),
+						occ_us, pawn_controlled, king_them_bb,
+					)
 				case .King:
 					to_bb = KING_TABLE[from]
-				}
-
-				if piece != .Pawn && piece != .King && to_bb & king_zone != 0 {
-					attackers += 1
-					add_eval_term(&attack_weight, us, eval_terms.attacker_weight[piece])
 				}
 			}
 		}
@@ -245,26 +244,12 @@ evaluate :: proc(position: ^Position) -> int {
 		}
 
 		scores[us] += pawn_structure(position, us)
-
-		attacker_count[us] = attackers
-		attacker_weight[us] = attack_weight
-	}
-
-	for us in Colour {
-		shelter[us] = king_shelter(position, us)
+		scores[us] += king_shelter(position, us)
 	}
 
 	add_eval_term(&scores[us], us, eval_terms.tempo)
 
-	when TRACING {
-		trace.normal = scores[.White] - scores[.Black]
-		trace.attacker_count = attacker_count
-	}
-
-	for side in Colour {
-		them := toggle(side)
-		scores[side] += king_safety_score(attacker_count[them], attacker_weight[them], shelter[side])
-	}
+	when TRACING do trace.normal = scores[.White] - scores[.Black]
 
 	phase = clamp(phase, 0, 24)
 	phase = (TAPER_SCALE * phase + 12) / 24
@@ -273,12 +258,6 @@ evaluate :: proc(position: ^Position) -> int {
 	mg_eval := int(score_mg(eval))
 	eg_eval := int(score_eg(eval))
 	return (mg_eval * phase + eg_eval * (TAPER_SCALE - phase)) / TAPER_SCALE
-}
-
-king_zone :: proc(side: Colour, king_sq: int) -> u64 {
-	zone := KING_TABLE[king_sq]
-	zone |= zone << 8 if side == .White else zone >> 8
-	return zone
 }
 
 king_shelter :: proc(position: ^Position, us: Colour) -> (score: Score) {
@@ -486,8 +465,11 @@ score_accumulation :: proc(t: ^testing.T) {
 	add(&acc, &ref_mg, &ref_eg, eval_weights.connected_pawns,	  8)
 	add(&acc, &ref_mg, &ref_eg, eval_weights.tempo)
 
-	// king safety
-	// add(&acc, &ref_mg, &ref_eg, ATTACK_STRENGTH[39])
+	// Potential safe checks near the enemy king
+	add(&acc, &ref_mg, &ref_eg, eval_weights.safe_check[.Knight], 2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.safe_check[.Bishop], 2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.safe_check[.Rook],   2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.safe_check[.Queen],  2)
 
 	if !testing.expect(t, ref_mg >= -32768 && ref_mg <= 32767, "mg overflows i16 — weights need adjustment") do return
 	if !testing.expect(t, ref_eg >= -32768 && ref_eg <= 32767, "eg overflows i16 — weights need adjustment") do return

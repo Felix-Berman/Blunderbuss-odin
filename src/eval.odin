@@ -14,6 +14,7 @@ BISHOP_MOBILITY_COUNT :: 14
 ROOK_MOBILITY_COUNT   :: 15
 QUEEN_MOBILITY_COUNT  :: 28
 MAX_SAFE_CHECKS_PER_PIECE :: 2
+MAX_KING_RING_PRESSURE_PER_PIECE :: 2
 
 EvalTerms :: struct($T: typeid) #packed {
 	tempo: T,
@@ -38,6 +39,7 @@ EvalTerms :: struct($T: typeid) #packed {
 	advanced_shield_two: [2]T,
 	pawn_storm: [8]T,
 	safe_check: [PieceType]T,
+	king_ring_pressure: [PieceType]T,
 }
 
 EvalWeights :: EvalTerms(Score)
@@ -129,6 +131,18 @@ add_safe_checks :: proc(
 	}
 }
 
+add_king_ring_pressure :: proc(
+	score: ^Score,
+	side: Colour,
+	piece: PieceType,
+	moves, ring, occ_us, pawn_controlled: u64,
+) {
+	attacks := moves & ring &~ occ_us &~ pawn_controlled
+	for _ in 0..<min(pop_count(attacks), MAX_KING_RING_PRESSURE_PER_PIECE) {
+		add_eval_term(score, side, eval_terms.king_ring_pressure[piece])
+	}
+}
+
 piece_phase: [PieceType]int = {
 	.Pawn = 0,
 	.Knight = 1,
@@ -167,6 +181,7 @@ evaluate :: proc(position: ^Position) -> int {
 
 		king_them := lsb(pieces[them][.King])
 		king_them_bb := pieces[them][.King]
+		king_ring_them := king_ring(them, king_them)
 
 		for bb, piece in pieces[us] {
 			from_bb := bb
@@ -193,6 +208,10 @@ evaluate :: proc(position: ^Position) -> int {
 					to_bb = KNIGHT_TABLE[from]
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					add_eval_term(&scores[us], us, eval_terms.knight_mobility[mobility])
+					add_king_ring_pressure(
+						&scores[us], us, piece, to_bb, king_ring_them,
+						occ_us, pawn_controlled,
+					)
 					add_safe_checks(
 						&scores[us], us, piece, to_bb, KNIGHT_TABLE[king_them],
 						occ_us, pawn_controlled, king_them_bb,
@@ -201,6 +220,10 @@ evaluate :: proc(position: ^Position) -> int {
 					to_bb = magic_bishop_moves(from, occ)
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					add_eval_term(&scores[us], us, eval_terms.bishop_mobility[mobility])
+					add_king_ring_pressure(
+						&scores[us], us, piece, to_bb, king_ring_them,
+						occ_us, pawn_controlled,
+					)
 					add_safe_checks(
 						&scores[us], us, piece, to_bb, magic_bishop_moves(king_them, occ_after_from),
 						occ_us, pawn_controlled, king_them_bb,
@@ -220,6 +243,10 @@ evaluate :: proc(position: ^Position) -> int {
 							add_eval_term(&scores[us], us, eval_terms.rook_semi_open)
 						}
 					}
+					add_king_ring_pressure(
+						&scores[us], us, piece, to_bb, king_ring_them,
+						occ_us, pawn_controlled,
+					)
 					add_safe_checks(
 						&scores[us], us, piece, to_bb, magic_rook_moves(king_them, occ_after_from),
 						occ_us, pawn_controlled, king_them_bb,
@@ -228,6 +255,10 @@ evaluate :: proc(position: ^Position) -> int {
 					to_bb = magic_queen_moves(from, occ)
 					mobility := pop_count(to_bb &~ occ_us &~ pawn_controlled)
 					add_eval_term(&scores[us], us, eval_terms.queen_mobility[mobility])
+					add_king_ring_pressure(
+						&scores[us], us, piece, to_bb, king_ring_them,
+						occ_us, pawn_controlled,
+					)
 					add_safe_checks(
 						&scores[us], us, piece, to_bb, magic_queen_moves(king_them, occ_after_from),
 						occ_us, pawn_controlled, king_them_bb,
@@ -258,6 +289,12 @@ evaluate :: proc(position: ^Position) -> int {
 	mg_eval := int(score_mg(eval))
 	eg_eval := int(score_eg(eval))
 	return (mg_eval * phase + eg_eval * (TAPER_SCALE - phase)) / TAPER_SCALE
+}
+
+king_ring :: proc(side: Colour, king_sq: int) -> u64 {
+	ring := KING_TABLE[king_sq]
+	ring |= ring << 8 if side == .White else ring >> 8
+	return ring
 }
 
 king_shelter :: proc(position: ^Position, us: Colour) -> (score: Score) {
@@ -470,6 +507,12 @@ score_accumulation :: proc(t: ^testing.T) {
 	add(&acc, &ref_mg, &ref_eg, eval_weights.safe_check[.Bishop], 2)
 	add(&acc, &ref_mg, &ref_eg, eval_weights.safe_check[.Rook],   2)
 	add(&acc, &ref_mg, &ref_eg, eval_weights.safe_check[.Queen],  2)
+
+	// Safe attacks into the enemy king ring
+	add(&acc, &ref_mg, &ref_eg, eval_weights.king_ring_pressure[.Knight], 2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.king_ring_pressure[.Bishop], 2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.king_ring_pressure[.Rook],   2)
+	add(&acc, &ref_mg, &ref_eg, eval_weights.king_ring_pressure[.Queen],  2)
 
 	if !testing.expect(t, ref_mg >= -32768 && ref_mg <= 32767, "mg overflows i16 — weights need adjustment") do return
 	if !testing.expect(t, ref_eg >= -32768 && ref_eg <= 32767, "eg overflows i16 — weights need adjustment") do return

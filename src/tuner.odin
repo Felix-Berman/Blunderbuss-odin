@@ -226,6 +226,9 @@ enforce_parameter_constraints :: proc(params, c_params: [][Phase]f32) {
 	safe_check_start := int(offset_of(Coeffs, safe_check) / TERM_SIZE)
 	safe_check_pawn_idx := safe_check_start + int(PieceType.Pawn)
 	safe_check_king_idx := safe_check_start + int(PieceType.King)
+	king_ring_pressure_start := int(offset_of(Coeffs, king_ring_pressure) / TERM_SIZE)
+	king_ring_pressure_pawn_idx := king_ring_pressure_start + int(PieceType.Pawn)
+	king_ring_pressure_king_idx := king_ring_pressure_start + int(PieceType.King)
 
 	// maintain centipawn relative eval
 	params[pawn_material_idx][.MG] = 0
@@ -234,6 +237,10 @@ enforce_parameter_constraints :: proc(params, c_params: [][Phase]f32) {
 	params[safe_check_pawn_idx][.EG] = 0
 	params[safe_check_king_idx][.MG] = 0
 	params[safe_check_king_idx][.EG] = 0
+	params[king_ring_pressure_pawn_idx][.MG] = 0
+	params[king_ring_pressure_pawn_idx][.EG] = 0
+	params[king_ring_pressure_king_idx][.MG] = 0
+	params[king_ring_pressure_king_idx][.EG] = 0
 
 	for piece in PieceType {
 		table_start := psqt_start + int(piece) * 64
@@ -289,6 +296,10 @@ enforce_parameter_constraints :: proc(params, c_params: [][Phase]f32) {
 	params[safe_check_pawn_idx][.EG] = 0
 	params[safe_check_king_idx][.MG] = 0
 	params[safe_check_king_idx][.EG] = 0
+	params[king_ring_pressure_pawn_idx][.MG] = 0
+	params[king_ring_pressure_pawn_idx][.EG] = 0
+	params[king_ring_pressure_king_idx][.MG] = 0
+	params[king_ring_pressure_king_idx][.EG] = 0
 }
 
 @(test)
@@ -306,6 +317,9 @@ tuner_parameter_constraints :: proc(t: ^testing.T) {
 	safe_check_start := int(offset_of(Coeffs, safe_check) / TERM_SIZE)
 	safe_check_pawn_idx := safe_check_start + int(PieceType.Pawn)
 	safe_check_king_idx := safe_check_start + int(PieceType.King)
+	king_ring_pressure_start := int(offset_of(Coeffs, king_ring_pressure) / TERM_SIZE)
+	king_ring_pressure_pawn_idx := king_ring_pressure_start + int(PieceType.Pawn)
+	king_ring_pressure_king_idx := king_ring_pressure_start + int(PieceType.King)
 
 	params[pawn_material_idx][.MG] = 42
 	params[pawn_material_idx][.EG] = -17
@@ -313,6 +327,10 @@ tuner_parameter_constraints :: proc(t: ^testing.T) {
 	params[safe_check_pawn_idx][.EG] = 17
 	params[safe_check_king_idx][.MG] = -31
 	params[safe_check_king_idx][.EG] = 11
+	params[king_ring_pressure_pawn_idx][.MG] = 13
+	params[king_ring_pressure_pawn_idx][.EG] = -19
+	params[king_ring_pressure_king_idx][.MG] = -23
+	params[king_ring_pressure_king_idx][.EG] = 29
 
 	enforce_parameter_constraints(params, c_params)
 
@@ -322,6 +340,10 @@ tuner_parameter_constraints :: proc(t: ^testing.T) {
 	if !testing.expect_value(t, c_params[safe_check_pawn_idx][.EG] + params[safe_check_pawn_idx][.EG], f32(0)) do return
 	if !testing.expect_value(t, c_params[safe_check_king_idx][.MG] + params[safe_check_king_idx][.MG], f32(0)) do return
 	if !testing.expect_value(t, c_params[safe_check_king_idx][.EG] + params[safe_check_king_idx][.EG], f32(0)) do return
+	if !testing.expect_value(t, c_params[king_ring_pressure_pawn_idx][.MG] + params[king_ring_pressure_pawn_idx][.MG], f32(0)) do return
+	if !testing.expect_value(t, c_params[king_ring_pressure_pawn_idx][.EG] + params[king_ring_pressure_pawn_idx][.EG], f32(0)) do return
+	if !testing.expect_value(t, c_params[king_ring_pressure_king_idx][.MG] + params[king_ring_pressure_king_idx][.MG], f32(0)) do return
+	if !testing.expect_value(t, c_params[king_ring_pressure_king_idx][.EG] + params[king_ring_pressure_king_idx][.EG], f32(0)) do return
 
 	for piece in PieceType {
 		table_start := psqt_start + int(piece) * 64
